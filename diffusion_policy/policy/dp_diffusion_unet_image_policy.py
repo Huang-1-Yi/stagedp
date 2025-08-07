@@ -31,6 +31,14 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             **kwargs):
         super().__init__()
 
+        # 调试标志
+        self.debug = True
+        if self.debug:
+            print("\n" + "="*50)
+            print(f"{'Policy初始化维度信息':^50}")
+            print("="*50)
+            print(f"原始shape_meta: {shape_meta}")
+
         # parse shapes
         action_shape = shape_meta['action']['shape']
         assert len(action_shape) == 1
@@ -44,6 +52,14 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         if obs_as_global_cond:
             input_dim = action_dim
             global_cond_dim = obs_feature_dim * n_obs_steps
+
+        # 添加特征维度输出
+        if self.debug:
+            print(f"观测特征维度 obs_feature_dim: {obs_feature_dim}")
+            print(f"动作维度 action_dim: {action_dim}")
+            print(f"全局条件维度 global_cond_dim: {global_cond_dim if obs_as_global_cond else 'N/A'}")
+            print(f"输入维度 input_dim: {input_dim}")
+            print("-"*50 + "\n")
 
         model = ConditionalUnet1D(
             input_dim=input_dim,
@@ -190,6 +206,9 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         self.normalizer.load_state_dict(normalizer.state_dict())
 
     def compute_loss(self, batch):
+
+
+        
         # normalize input
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
@@ -197,6 +216,18 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
 
+        # # Step 5: 训练输入维度
+        # if self.debug:
+        #     print("\n" + "="*50)
+        #     print(f"{'训练阶段输入维度':^50}")
+        #     print("="*50)
+        #     print(f"批量大小: {batch_size}")
+        #     print(f"时间长度: {horizon}")
+        #     print(f"观测数据形状:")
+        #     for k, v in nobs.items():
+        #         print(f"  {k}: {tuple(v.shape)}")
+        #     print(f"动作数据形状: {tuple(nactions.shape)}")
+        
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
@@ -221,14 +252,32 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # generate impainting mask
         condition_mask = self.mask_generator(trajectory.shape)
 
+
+        # # Step 6: 特征编码维度
+        # if self.debug:
+        #     print("\n" + "-"*50)
+        #     print(f"特征编码输出:")
+        #     if self.obs_as_global_cond:
+        #         print(f"  全局条件形状: {tuple(global_cond.shape)}")
+        #     else:
+        #         print(f"  条件数据形状: {tuple(cond_data.shape)}")
+        #     print(f"  掩码形状: {tuple(condition_mask.shape)}")
+        
         # Sample noise that we'll add to the images
         noise = torch.randn(trajectory.shape, device=trajectory.device)
+
         bsz = trajectory.shape[0]
         # Sample a random timestep for each image
         timesteps = torch.randint(
             0, self.noise_scheduler.config.num_train_timesteps, 
             (bsz,), device=trajectory.device
         ).long()
+
+        # if self.debug:
+        #     print(f"\n噪声形状: {tuple(noise.shape)}")
+        #     print(f"时间步形状: {tuple(timesteps.shape)}")
+        
+
         # Add noise to the clean images according to the noise magnitude at each timestep
         # (this is the forward diffusion process)
         noisy_trajectory = self.noise_scheduler.add_noise(
@@ -237,12 +286,28 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # compute loss mask
         loss_mask = ~condition_mask
 
+        # if self.debug:
+        #     print(f"噪声轨迹形状: {tuple(noisy_trajectory.shape)}")
+        #     print(f"损失掩码形状: {tuple(loss_mask.shape)}")
+        
         # apply conditioning
         noisy_trajectory[condition_mask] = cond_data[condition_mask]
         
         # Predict the noise residual
         pred = self.model(noisy_trajectory, timesteps, 
             local_cond=local_cond, global_cond=global_cond)
+
+        # # Step 8: 模型前向传播维度
+        # if self.debug:
+        #     print("\n" + "-"*50)
+        #     print(f"模型输入:")
+        #     print(f"  噪声轨迹: {tuple(noisy_trajectory.shape)}")
+        #     print(f"  时间步: {tuple(timesteps.shape)}")
+        #     print(f"  本地条件: {tuple(local_cond.shape) if local_cond is not None else 'N/A'}")
+        #     print(f"  全局条件: {tuple(global_cond.shape) if global_cond is not None else 'N/A'}")
+        #     print(f"模型输出形状: {tuple(pred.shape)}")
+        
+
 
         pred_type = self.noise_scheduler.config.prediction_type 
         if pred_type == 'epsilon':
@@ -253,7 +318,16 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             raise ValueError(f"Unsupported prediction type {pred_type}")
 
         loss = F.mse_loss(pred, target, reduction='none')
+
+        # # Step 9: 损失计算维度
+        # if self.debug:
+        #     print(f"\n目标形状: {tuple(target.shape)}")
+        #     print(f"损失掩码应用前形状: {tuple(loss.shape)}")
+        
         loss = loss * loss_mask.type(loss.dtype)
         loss = reduce(loss, 'b ... -> b (...)', 'mean')
         loss = loss.mean()
+        # if self.debug:
+        #     print(f"最终损失标量值: {loss.item():.4f}")
+        #     print("="*50 + "\n")
         return loss

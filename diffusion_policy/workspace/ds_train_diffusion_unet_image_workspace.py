@@ -21,7 +21,9 @@ import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.ds_diffusion_unet_image_policy import DiffusionUnetImagePolicy
+# from diffusion_policy.policy.ds_diffusion_unet_image_policy import DiffusionUnetImagePolicy
+from diffusion_policy.policy.ds_diffusion_unet_timm_policy import DiffusionUnetTimmPolicy
+
 from diffusion_policy.dataset.base_dataset import BaseImageDataset, BaseDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -49,9 +51,9 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: DiffusionUnetImagePolicy = hydra.utils.instantiate(cfg.policy)
+        self.model: DiffusionUnetTimmPolicy = hydra.utils.instantiate(cfg.policy)
 
-        self.ema_model: DiffusionUnetImagePolicy = None
+        self.ema_model: DiffusionUnetTimmPolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 

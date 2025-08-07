@@ -1,6 +1,6 @@
 import copy
-from typing import Dict, Optional
-
+import json
+import hashlib
 import os
 from datetime import datetime
 import pathlib
@@ -11,6 +11,8 @@ from threadpoolctl import threadpool_limits
 from tqdm import trange, tqdm
 from filelock import FileLock
 import shutil
+import cv2
+from omegaconf import OmegaConf
 
 from diffusion_policy.codecs.imagecodecs_numcodecs import register_codecs
 from diffusion_policy.common.normalize_util import (
@@ -22,14 +24,10 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
 from diffusion_policy.dataset.base_dataset import BaseDataset
 from diffusion_policy.model.common.normalizer import LinearNormalizer
-from diffusion_policy.real_world.real_data_conversion import real_data_to_replay_buffer
+from diffusion_policy.common.real_data_conversion import real_data_to_replay_buffer
 from umi.common.pose_util import pose_to_mat, mat_to_pose10d
 
 register_codecs()
-
-import json
-import hashlib
-from omegaconf import OmegaConf
 
 class UmiDataset(BaseDataset):
     def __init__(self,
@@ -43,61 +41,53 @@ class UmiDataset(BaseDataset):
         seed: int=42,
         val_ratio: float=0.0,
         max_duration: Optional[float]=None,
-        use_ratio: float = 1.0,             # 新增：数据集使用比例,指定要使用的子数据集编号（如"1-3,5"）
-        dataset_idx: Optional[str] = None,  # 新增：指定数据子集索引,控制子数据集的使用比例（如仅使用50%数据）
-        use_cache: bool=False,              # 新增：启用缓存机制
+        use_ratio: float = 1.0,
+        dataset_idx: Optional[str] = None,
+        use_cache: bool=False  # 新增：启用缓存机制
     ):
         self.pose_repr = pose_repr
         self.obs_pose_repr = self.pose_repr.get('obs_pose_repr', 'rel')
         self.action_pose_repr = self.pose_repr.get('action_pose_repr', 'rel')
         
-
-        
-
-        if cache_dir is None:
-            # load into memory store
-            with zarr.ZipStore(dataset_path, mode='r') as zip_store:
-                replay_buffer = ReplayBuffer.copy_from_store(
-                    src_store=zip_store, 
-                    store=zarr.MemoryStore()
-                )
-        else:
-            # TODO: refactor into a stand alone function?
-            # determine path name
-            mod_time = os.path.getmtime(dataset_path)
-            stamp = datetime.fromtimestamp(mod_time).isoformat()
-            stem_name = os.path.basename(dataset_path).split('.')[0]
-            cache_name = '_'.join([stem_name, stamp])
-            cache_dir = pathlib.Path(os.path.expanduser(cache_dir))
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_path = cache_dir.joinpath(cache_name + '.zarr.mdb')
-            lock_path = cache_dir.joinpath(cache_name + '.lock')
+        # === 新增：数据转换功能 ===
+        if use_cache:
+            # 生成缓存文件名
+            shape_meta_json = json.dumps(OmegaConf.to_container(shape_meta), sort_keys=True)
+            shape_meta_hash = hashlib.md5(shape_meta_json.encode('utf-8')).hexdigest()
+            cache_zarr_path = os.path.join(cache_dir, shape_meta_hash + '.zarr.zip')
+            cache_lock_path = cache_zarr_path + '.lock'
             
-            # load cached file
             print('Acquiring lock on cache.')
-            with FileLock(lock_path):
-                # cache does not exist
-                if not cache_path.exists():
+            with FileLock(cache_lock_path):
+                if not os.path.exists(cache_zarr_path):
+                    # 缓存不存在，创建新缓存
                     try:
-                        with zarr.LMDBStore(str(cache_path),     
-                            writemap=True, metasync=False, sync=False, map_async=True, lock=False
-                            ) as lmdb_store:
-                            with zarr.ZipStore(dataset_path, mode='r') as zip_store:
-                                print(f"Copying data to {str(cache_path)}")
-                                ReplayBuffer.copy_from_store(
-                                    src_store=zip_store,
-                                    store=lmdb_store
-                                )
-                        print("Cache written to disk!")
+                        print('Cache does not exist. Creating!')
+                        replay_buffer = self._get_replay_buffer(
+                            dataset_path=dataset_path,
+                            shape_meta=shape_meta,
+                            store=zarr.MemoryStore()
+                        )
+                        print('Saving cache to disk.')
+                        with zarr.ZipStore(cache_zarr_path) as zip_store:
+                            replay_buffer.save_to_store(store=zip_store)
                     except Exception as e:
-                        shutil.rmtree(cache_path)
+                        if os.path.exists(cache_zarr_path):
+                            shutil.rmtree(cache_zarr_path)
                         raise e
-            
-            # open read-only lmdb store
-            store = zarr.LMDBStore(str(cache_path), readonly=True, lock=False)
-            replay_buffer = ReplayBuffer.create_from_group(
-                group=zarr.group(store)
+                else:
+                    print('Loading cached ReplayBuffer from Disk.')
+                    with zarr.ZipStore(cache_zarr_path, mode='r') as zip_store:
+                        replay_buffer = ReplayBuffer.copy_from_store(
+                            src_store=zip_store, store=zarr.MemoryStore())
+                    print('Loaded!')
+        else:
+            replay_buffer = self._get_replay_buffer(
+                dataset_path=dataset_path,
+                shape_meta=shape_meta,
+                store=zarr.MemoryStore()
             )
+        # === 结束新增 ===
         
         self.num_robot = 0
         rgb_keys = list()
@@ -240,6 +230,43 @@ class UmiDataset(BaseDataset):
         self.temporally_independent_normalization = temporally_independent_normalization
         self.threadpool_limits_is_applied = False
 
+    # === 新增：数据转换函数 ===
+    def _get_replay_buffer(self, dataset_path, shape_meta, store):
+        # 解析 shape_meta
+        rgb_keys = list()
+        lowdim_keys = list()
+        out_resolutions = dict()
+        lowdim_shapes = dict()
+        obs_shape_meta = shape_meta['obs']
+        
+        for key, attr in obs_shape_meta.items():
+            type = attr.get('type', 'low_dim')
+            shape = tuple(attr.get('shape'))
+            if type == 'rgb':
+                rgb_keys.append(key)
+                c, h, w = shape
+                out_resolutions[key] = (w, h)
+            elif type == 'low_dim':
+                lowdim_keys.append(key)
+                lowdim_shapes[key] = tuple(shape)
+                if 'pose' in key:
+                    assert tuple(shape) in [(2,), (6,), (7,)]
+        
+        action_shape = tuple(shape_meta['action']['shape'])
+        assert action_shape in [(2,), (6,), (7,)]
+        
+        # 加载数据
+        cv2.setNumThreads(1)
+        with threadpool_limits(1):
+            replay_buffer = real_data_to_replay_buffer(
+                dataset_path=dataset_path,
+                out_store=store,
+                out_resolutions=out_resolutions,
+                lowdim_keys=lowdim_keys + ['action'],
+                image_keys=rgb_keys
+            )
+        
+        return replay_buffer
     
     def get_validation_dataset(self):
         val_set = copy.copy(self)
@@ -439,58 +466,3 @@ class UmiDataset(BaseDataset):
             'action': torch.from_numpy(data['action'].astype(np.float32))
         }
         return torch_data
-
-def zarr_resize_index_last_dim(zarr_arr, idxs):
-    actions = zarr_arr[:]
-    actions = actions[...,idxs]
-    zarr_arr.resize(zarr_arr.shape[:-1] + (len(idxs),))
-    zarr_arr[:] = actions
-    return zarr_arr
-
-def _get_replay_buffer(dataset_path, shape_meta, store):
-    # parse shape meta
-    rgb_keys = list()
-    lowdim_keys = list()
-    out_resolutions = dict()
-    lowdim_shapes = dict()
-    obs_shape_meta = shape_meta['obs']
-    for key, attr in obs_shape_meta.items():
-        type = attr.get('type', 'low_dim')
-        shape = tuple(attr.get('shape'))
-        if type == 'rgb':
-            rgb_keys.append(key)
-            c,h,w = shape
-            out_resolutions[key] = (w,h)
-        elif type == 'low_dim':
-            lowdim_keys.append(key)
-            lowdim_shapes[key] = tuple(shape)
-            if 'pose' in key:
-                assert tuple(shape) in [(2,),(6,),(7,)]
-    
-    action_shape = tuple(shape_meta['action']['shape'])
-    assert action_shape in [(2,),(6,),(7,)]
-
-    # load data
-    cv2.setNumThreads(1)
-    with threadpool_limits(1):
-        replay_buffer = real_data_to_replay_buffer(
-            dataset_path=dataset_path,
-            out_store=store,
-            out_resolutions=out_resolutions,
-            lowdim_keys=lowdim_keys + ['action'],
-            image_keys=rgb_keys
-        )
-
-    # # transform lowdim dimensions
-    # if action_shape == (2,):
-    #     # 2D action space, only controls X and Y
-    #     zarr_arr = replay_buffer['action']
-    #     zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
-    
-    # for key, shape in lowdim_shapes.items():
-    #     if 'pose' in key and shape == (2,):
-    #         # only take X and Y
-    #         zarr_arr = replay_buffer[key]
-    #         zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
-
-    return replay_buffer
