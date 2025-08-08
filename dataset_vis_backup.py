@@ -879,6 +879,7 @@ class ZarrInspector:
             return False
 
     # 在ZarrInspector类中添加以下新功能
+
     def create_minimal_dataset(self, output_path, camera_key="camera_0", camera_key_new="camera0_rgb", robot_id="robot0"):
         """
         创建只包含指定相机和机器人数据的新Zarr文件
@@ -914,6 +915,28 @@ class ZarrInspector:
             
             # 创建data组
             data_group = new_store.create_group('data')
+            
+            # 1. 复制相机数据并重命名为camera0_rgb
+            original_camera_key = camera_key
+            target_camera_key = camera_key_new
+            
+            camera_path = f"data/{original_camera_key}"
+            if camera_path in source_store:
+                logger.info(f"复制相机数据: {camera_path} -> data/{target_camera_key}")
+                camera_array = source_store[camera_path]
+                
+                # 直接创建新数组并复制数据
+                data_group.create_dataset(
+                    name=target_camera_key,
+                    shape=camera_array.shape,
+                    chunks=camera_array.chunks,
+                    dtype=camera_array.dtype,
+                    compressor=camera_array.compressor
+                )
+                data_group[target_camera_key][:] = camera_array[:]
+            else:
+                logger.error(f"未找到相机数据: {camera_path}")
+                return False
             
             # 2. 创建机器人数据
             # 获取episode边界
@@ -1032,28 +1055,6 @@ class ZarrInspector:
                 data_group['stage'][start_idx:end_idx+1] = stage_data
                 data_group['action'][start_idx:end_idx+1] = action_10d
             
-            # 1. 复制相机数据并重命名为camera0_rgb（移动到这里）
-            original_camera_key = camera_key
-            target_camera_key = camera_key_new
-            
-            camera_path = f"data/{original_camera_key}"
-            if camera_path in source_store:
-                logger.info(f"复制相机数据: {camera_path} -> data/{target_camera_key}")
-                camera_array = source_store[camera_path]
-                
-                # 直接创建新数组并复制数据
-                data_group.create_dataset(
-                    name=target_camera_key,
-                    shape=camera_array.shape,
-                    chunks=camera_array.chunks,
-                    dtype=camera_array.dtype,
-                    compressor=camera_array.compressor
-                )
-                data_group[target_camera_key][:] = camera_array[:]
-            else:
-                logger.error(f"未找到相机数据: {camera_path}")
-                return False
-            
             logger.info("===== 精简数据集创建完成 =====")
             
             # 检查新数据集
@@ -1065,6 +1066,7 @@ class ZarrInspector:
         except Exception as e:
             logger.exception(f"创建精简数据集时出错: {str(e)}")
             return False
+
 
 
 def compare_zarr_structures(store1, store2, path=""):

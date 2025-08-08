@@ -33,6 +33,7 @@ shape_meta: &shape_meta
       down_sample_steps: ${task.obs_down_sample_steps}    # float 
       type: low_dim
       ignore_by_policy: ${task.ignore_proprioception}     # 是否忽略本体感知数据
+
     robot0_eef_rot_axis_angle:                            # 机器人末端执行器的旋转（轴角表示） 机械臂旋转姿态
       raw_shape: [3]                                      # 原始旋转向量（轴角表示）
       shape: [6]                                          # 转换后的6D旋转表示（更稳定的神经网络输入）
@@ -53,14 +54,14 @@ shape_meta: &shape_meta
       type: low_dim
       ignore_by_policy: ${task.ignore_proprioception}
 
-    # # pose with respect to episode start
-    # robot0_eef_pos_wrt_start:                             # 当前位置相对于起始位置的偏移量（平移部分）
-    #   shape: [3]
-    #   horizon: ${task.low_dim_obs_horizon}                # int
-    #   latency_steps: ${eval:'(${task.camera_obs_latency} - ${task.robot_obs_latency}) * ${task.dataset_frequeny}'} # float
-    #   down_sample_steps: ${task.obs_down_sample_steps}    # float
-    #   type: low_dim
-    #   ignore_by_policy: ${task.ignore_proprioception}
+    # pose with respect to episode start
+    robot0_eef_pos_wrt_start:                             # 当前位置相对于起始位置的偏移量（平移部分）
+      shape: [3]
+      horizon: ${task.low_dim_obs_horizon}                # int
+      latency_steps: ${eval:'(${task.camera_obs_latency} - ${task.robot_obs_latency}) * ${task.dataset_frequeny}'} # float
+      down_sample_steps: ${task.obs_down_sample_steps}    # float
+      type: low_dim
+      ignore_by_policy: ${task.ignore_proprioception}
     robot0_eef_rot_axis_angle_wrt_start:                  # 相对于起点的旋转
       raw_shape: [3]
       shape: [6]

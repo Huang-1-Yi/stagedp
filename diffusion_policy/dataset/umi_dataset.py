@@ -19,7 +19,9 @@ from diffusion_policy.common.normalize_util import (
 from diffusion_policy.common.pose_repr_util import convert_pose_mat_rep
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.common.replay_buffer import ReplayBuffer
-from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
+# from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
+from diffusion_policy.common.sampler_ds import SequenceSampler, get_val_mask
+
 from diffusion_policy.dataset.base_dataset import BaseDataset
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.real_world.real_data_conversion import real_data_to_replay_buffer
@@ -128,6 +130,21 @@ class UmiDataset(BaseDataset):
             # solve down_sample_steps
             down_sample_steps = shape_meta['obs'][key]['down_sample_steps']
             key_down_sample_steps[key] = down_sample_steps
+
+        # 确保包含所有必要键
+        required_keys = [
+            'robot0_eef_pos', 
+            'robot0_eef_rot_axis_angle',
+            'robot0_gripper_width',
+            'robot0_eef_pos_wrt_start',
+            'robot0_eef_rot_axis_angle_wrt_start'
+        ]
+        
+        for key in required_keys:
+            if key not in lowdim_keys:
+                lowdim_keys.append(key)
+                print(f"添加缺失键到lowdim_keys: {key}")
+
 
         # solve action
         key_horizon['action'] = shape_meta['action']['horizon']

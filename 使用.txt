@@ -1,3 +1,5 @@
+conda activate dp0628
+
 原始dp的unet
 HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train_diffusion_unet_real_image_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
 
@@ -9,7 +11,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train
 conda activate umi
 
 umi的unet
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr.zip
 
 umi的tf
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_transformer_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_transformer_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr.zip
