@@ -1,11 +1,13 @@
 import gym
 import numpy as np
-from diffusion_policy.real_world.video_recorder import VideoRecorder
+from diffusion_policy.real_world.video_recorder import VideoRecorder,VideoRecorder_new
 
 class VideoRecordingWrapper(gym.Wrapper):
     def __init__(self, 
             env, 
-            video_recoder: VideoRecorder,
+            # video_recoder: VideoRecorder,
+            video_recoder: VideoRecorder_new,
+
             mode='rgb_array',
             file_path=None,
             steps_per_render=1,

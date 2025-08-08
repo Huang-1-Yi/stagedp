@@ -45,8 +45,8 @@ class MultiRealsense:
         transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
         vis_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
         recording_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
-        video_recorder: Optional[Union[VideoRecorder, List[VideoRecorder]]]=None,
-        # video_recorder: Optional[Union[VideoRecorder_new, List[VideoRecorder_new]]]=None,
+        # video_recorder: Optional[Union[VideoRecorder, List[VideoRecorder]]]=None,
+        video_recorder: Optional[Union[VideoRecorder_new, List[VideoRecorder_new]]]=None,
         
         verbose=False
         ):
@@ -67,8 +67,8 @@ class MultiRealsense:
         vis_transform = repeat_to_list(vis_transform, n_cameras, Callable)
         recording_transform = repeat_to_list(recording_transform, n_cameras, Callable)
 
-        video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder)
-        # video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder_new)
+        # video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder)
+        video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder_new)
 
         cameras = dict()
         # 为每个摄像头创建SingleRealsense对象，保存到self.cameras字典

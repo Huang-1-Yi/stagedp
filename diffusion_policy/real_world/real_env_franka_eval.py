@@ -157,7 +157,7 @@ class RealEnvFranka:
             # 在每一帧到达后立即发送 send every frame immediately after arrival
             # 不考虑设置的帧率限制 ignores put_fps
             put_downsample  =False,                     # 放，是否需要下采样
-            record_fps      =recording_fps,             # 记录帧率
+            # record_fps      =recording_fps,             # 记录帧率
             enable_color    =True,#启用颜色
             enable_depth    =True,                        # 3D保存
             # enable_depth    =False,                     # 3D保存

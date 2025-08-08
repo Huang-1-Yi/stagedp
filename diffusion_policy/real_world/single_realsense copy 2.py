@@ -14,7 +14,10 @@ from diffusion_policy.common.timestamp_accumulator import get_accumulate_timesta
 from diffusion_policy.shared_memory.shared_ndarray import SharedNDArray
 from diffusion_policy.shared_memory.shared_memory_ring_buffer import SharedMemoryRingBuffer
 from diffusion_policy.shared_memory.shared_memory_queue import SharedMemoryQueue, Full, Empty
-from diffusion_policy.real_world.video_recorder import VideoRecorder
+from diffusion_policy.real_world.video_recorder import VideoRecorder, VideoRecorder_new
+
+# from diffusion_policy.real_world.stagepredictorprocess import EnhancedStagePredictorProcess
+
 
 class Command(enum.Enum):
     SET_COLOR_OPTION = 0
@@ -34,7 +37,6 @@ class SingleRealsense(mp.Process):
             capture_fps=30,
             put_fps=None,
             put_downsample=True,
-            record_fps=None,
             enable_color=True,
             enable_depth=False,
             enable_infrared=False,
@@ -44,7 +46,9 @@ class SingleRealsense(mp.Process):
             transform: Optional[Callable[[Dict], Dict]] = None,
             vis_transform: Optional[Callable[[Dict], Dict]] = None,
             recording_transform: Optional[Callable[[Dict], Dict]] = None,
-            video_recorder: Optional[VideoRecorder] = None,
+            # video_recorder: Optional[VideoRecorder] = None,
+            video_recorder: Optional[VideoRecorder_new] = None,
+
             verbose=False,
         ):
         super().__init__()
@@ -68,8 +72,6 @@ class SingleRealsense(mp.Process):
 
         if put_fps is None:
             put_fps = capture_fps
-        if record_fps is None:
-            record_fps = capture_fps
 
         # create ring buffer
         resolution = tuple(resolution)
@@ -137,13 +139,20 @@ class SingleRealsense(mp.Process):
 
         # create video recorder
         if video_recorder is None:
-            video_recorder = VideoRecorder.create_h264(
-                fps=record_fps, 
-                codec='h264',
+            # video_recorder = VideoRecorder.create_h264(
+            #     fps=capture_fps, 
+            #     codec='h264',
+            #     input_pix_fmt='bgr24', 
+            #     crf=18,
+            #     thread_type='FRAME',
+            #     thread_count=1)
+            # default to nvenc GPU encoder
+            video_recorder = VideoRecorder_new.create_hevc_nvenc(
+                shm_manager=shm_manager,
+                fps=capture_fps, 
                 input_pix_fmt='bgr24', 
-                crf=18,
-                thread_type='FRAME',
-                thread_count=1)
+                bit_rate=3000*1000)
+        assert video_recorder.fps == capture_fps
 
         # copied variables
         self.serial_number = serial_number
@@ -151,7 +160,6 @@ class SingleRealsense(mp.Process):
         self.capture_fps = capture_fps
         self.put_fps = put_fps
         self.put_downsample = put_downsample
-        self.record_fps = record_fps
         self.enable_color = enable_color
         self.enable_depth = enable_depth
         self.enable_infrared = enable_infrared
@@ -327,6 +335,10 @@ class SingleRealsense(mp.Process):
             rs_config.enable_stream(rs.stream.infrared,
                 w, h, rs.format.y8, fps)
 
+        # # 启动预测器进程
+        # if self.enable_stage_predictor:
+        #     self.predictor_process.start()
+
         if self.enable_sam2:
             ################################ sam2输入 ###############################
             color_mmap = None
@@ -344,11 +356,11 @@ class SingleRealsense(mp.Process):
 
             # Create or overwrite memory-mapped files
 
-            # if os.path.exists(self.color_ts_buffer_path):
-            #     print(f"File {self.color_ts_buffer_path} exists, deleting it.")
+            if os.path.exists(self.color_ts_buffer_path):
+                print(f"File {self.color_ts_buffer_path} exists, keeping it.")# deleting
             #     os.remove(self.color_ts_buffer_path)
-            # if os.path.exists(self.index_buffer_path):
-            #     print(f"File {self.index_buffer_path} exists, deleting it.")
+            if os.path.exists(self.index_buffer_path):
+                print(f"File {self.index_buffer_path} exists, keeping it.")
             #     os.remove(self.index_buffer_path)
             # 初始化内存映射文件
             if not os.path.exists(self.color_ts_buffer_path):
@@ -440,8 +452,6 @@ class SingleRealsense(mp.Process):
                         # 添加异常恢复机制
                         mask = np.zeros((h, w), dtype=np.uint8)
 
-                
-
                 # print("single中mask的形状:",mask.shape,"self.resolution[::-1]",self.resolution[::-1])
                 # print("rgb的形状:",data['color'].shape)
                 # if mask.shape != self.resolution[::-1]:
@@ -453,6 +463,9 @@ class SingleRealsense(mp.Process):
                 #     raise ValueError(f"Mask shape mismatch: expected {(h, w)}, got {mask.shape}")
                 return mask, timestamp, current_idx
 
+
+
+
         try:
             rs_config.enable_device(self.serial_number)
 
@@ -460,17 +473,46 @@ class SingleRealsense(mp.Process):
             pipeline = rs.pipeline()
             pipeline_profile = pipeline.start(rs_config)
 
-            # report global time
-            # https://github.com/IntelRealSense/librealsense/pull/3909
-            d = pipeline_profile.get_device().first_color_sensor()
-            d.set_option(rs.option.global_time_enabled, 1)
+            # # report global time
+            # # https://github.com/IntelRealSense/librealsense/pull/3909
+            # d = pipeline_profile.get_device().first_color_sensor()
+            # d.set_option(rs.option.global_time_enabled, 1)
 
-            # setup advanced mode
+            # # setup advanced mode
+            # if self.advanced_mode_config is not None:
+            #     json_text = json.dumps(self.advanced_mode_config)
+            #     device = pipeline_profile.get_device()
+            #     advanced_mode = rs.rs400_advanced_mode(device)
+            #     advanced_mode.load_json(json_text)
+
+            # ==== 修改1：使用通用传感器查询方式替换 first_color_sensor() ====
+            device = pipeline_profile.get_device()
+            sensors = device.query_sensors()
+            color_sensor = None
+            for sensor in sensors:
+                # 使用D405兼容的传感器识别方式
+                if hasattr(sensor, 'is_color_sensor') and sensor.is_color_sensor():
+                    color_sensor = sensor
+                    break
+                    
+            if color_sensor is not None:
+                # 尝试设置全局时间选项
+                try:
+                    color_sensor.set_option(rs.option.global_time_enabled, 1)
+                except Exception as e:
+                    print(f"设置全局时间选项失败: {e}")
+            else:
+                print(f"警告: 未找到彩色传感器，跳过时间戳设置 ({self.serial_number})")
+            
+            # ==== 修改2：确保应用高级配置 ====
             if self.advanced_mode_config is not None:
-                json_text = json.dumps(self.advanced_mode_config)
-                device = pipeline_profile.get_device()
-                advanced_mode = rs.rs400_advanced_mode(device)
-                advanced_mode.load_json(json_text)
+                try:
+                    advanced_mode = rs.rs400_advanced_mode(device)
+                    json_text = json.dumps(self.advanced_mode_config)
+                    advanced_mode.load_json(json_text)
+                except Exception as e:
+                    print(f"应用高级模式配置失败: {e}")
+
 
             # get
             color_stream = pipeline_profile.get_stream(rs.stream.color)

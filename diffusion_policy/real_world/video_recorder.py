@@ -8,6 +8,8 @@ import enum
 import multiprocessing as mp
 from multiprocessing.managers import SharedMemoryManager
 from diffusion_policy.shared_memory.shared_memory_queue import SharedMemoryQueue, Full, Empty
+import time
+
 
 def read_video(
         video_path: str, dt: float,
@@ -294,6 +296,12 @@ class VideoRecorder_new(mp.Process):
             and (not self.stop_event.is_set())
         
     def start_recording(self, video_path: str, start_time: float=-1):
+        """开始录制视频
+        
+        Args:
+            video_path: 视频文件路径
+            start_time: 录制开始时间戳（可选）
+        """
         path_len = len(video_path.encode('utf-8'))
         if path_len > self.MAX_PATH_LENGTH:
             raise RuntimeError('video_path too long.')

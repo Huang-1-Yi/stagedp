@@ -68,7 +68,7 @@ class RealEnvFranka:
             video_capture_fps   = 30,                   # 视频捕捉帧率
             video_capture_resolution=(640,480),         # 视频捕捉分辨率
             # saving params
-            record_raw_video    = True,                 # 是否记录原始视频，默认是 True False
+            record_raw_video    = True,                 # 是否记录原始视频，默认是
             thread_per_video    = 2,                    # 每个视频的线程数
             video_crf           = 21,                   # 视频质量
             # vis params
@@ -147,26 +147,25 @@ class RealEnvFranka:
             recording_fps       = frequency             # 使用控制频率作为录制帧率
             recording_pix_fmt   = 'rgb24'               # 使用RGB24像素格式
 
-        if record_raw_video:  
-            # video_recorder = VideoRecorder.create_h264(
-            #     fps             = recording_fps, 
-            #     codec           = 'h264',
-            #     input_pix_fmt   = recording_pix_fmt, 
-            #     crf             = video_crf,
-            #     thread_type     = 'FRAME',
-            #     thread_count    = thread_per_video
-            # )                                               # 创建视频录制器
-            # 创建视频录制器列表（每个相机一个）
-            video_recorders = []
-            bit_rate = 3000 * 1000
-            for _ in range(len(camera_serial_numbers)):
-                video_recorders.append(
-                    VideoRecorder_new.create_hevc_nvenc(
-                        fps             = recording_fps,
-                        input_pix_fmt   = 'bgr24',
-                        bit_rate        = bit_rate
-                    )
-                )
+        video_recorder = VideoRecorder.create_h264(
+            fps             = recording_fps, 
+            codec           = 'h264',
+            input_pix_fmt   = recording_pix_fmt, 
+            crf             = video_crf,
+            thread_type     = 'FRAME',
+            thread_count    = thread_per_video
+        )                                               # 创建视频录制器
+        # # 创建视频录制器列表（每个相机一个）
+        # video_recorders = []
+        # bit_rate = 3000 * 1000
+        # for _ in range(len(camera_serial_numbers)):
+        #     video_recorders.append(
+        #         VideoRecorder_new.create_hevc_nvenc(
+        #             fps             = recording_fps,
+        #             input_pix_fmt   = 'bgr24',
+        #             bit_rate        = bit_rate
+        #         )
+        #     )
 
 
         realsense = MultiRealsense(
@@ -187,7 +186,8 @@ class RealEnvFranka:
             transform       =transform,                 # 转换
             vis_transform   =vis_transform,             # 可视化转换
             recording_transform=recording_transfrom,    # 记录转换
-            video_recorder  =video_recorders,            # 视频记录器
+            video_recorder  =video_recorder,            # 视频记录器
+            # video_recorder  =video_recorders,            # 视频记录器
             verbose         =False                      # 是否显示详细信息
         )   # 创建Realsense多相机管理器
         
@@ -526,7 +526,6 @@ class RealEnvFranka:
             is_new = timestamps > receive_time                          # 找到所有新时间戳
             new_actions = actions[is_new]                               # 获取新动作
             new_timestamps = timestamps[is_new]                         # 获取新时间戳
-            new_stages = stages[is_new]                                 # 获取新阶段
 
             # schedule waypoints
             for i in range(len(new_actions)):                           # 遍历新动作
@@ -544,11 +543,6 @@ class RealEnvFranka:
             if self.action_accumulator is not None:                     # 如果动作累加器不为空
                 self.action_accumulator.put(                            # 将新动作和新时间戳放入动作累加器
                     new_actions,
-                    new_timestamps
-                )
-            if self.stage_accumulator is not None:                      # 如果阶段累加器不为空
-                self.stage_accumulator.put(                             # 将新阶段和新时间戳放入阶段累加器
-                    new_stages,
                     new_timestamps
                 )
         else:
