@@ -46,13 +46,13 @@ class SingleRealsense(mp.Process):
             transform: Optional[Callable[[Dict], Dict]] = None,
             vis_transform: Optional[Callable[[Dict], Dict]] = None,
             recording_transform: Optional[Callable[[Dict], Dict]] = None,
-            video_recorder: Optional[VideoRecorder] = None,
-            # video_recorder: Optional[VideoRecorder_new] = None,
+            # video_recorder: Optional[VideoRecorder] = None,
+            video_recorder: Optional[VideoRecorder_new] = None,
 
             verbose=False,
         ):
         super().__init__()
-        
+
         # sam2
         self.enable_sam2 = enable_sam2
         self.serial_number = serial_number
@@ -139,31 +139,31 @@ class SingleRealsense(mp.Process):
 
         # create video recorder
         if video_recorder is None:
-            video_recorder = VideoRecorder.create_h264(
-                fps=capture_fps, 
-                codec='h264',
-                input_pix_fmt='bgr24', 
-                crf=18,
-                thread_type='FRAME',
-                thread_count=1)
+            # video_recorder = VideoRecorder.create_h264(
+            #     fps=capture_fps, 
+            #     codec='h264',
+            #     input_pix_fmt='bgr24', 
+            #     crf=18,
+            #     thread_type='FRAME',
+            #     thread_count=1)
             # # 使用VideoRecorder_new的创建方法 default to nvenc GPU encoder
-            # try:
-            #     # 尝试使用GPU编码
-            #     video_recorder = VideoRecorder_new.create_hevc_nvenc(
-            #         shm_manager=shm_manager, # 需要传入共享内存管理器
-            #         fps=capture_fps, 
-            #         input_pix_fmt='bgr24', 
-            #         bit_rate=3000 * 1000
-            #     )
-            # except Exception as e:
-            #     print(f"无法初始化HEVC_NVENC编码器: {e}, 回退到CPU编码")
-            #     # 使用CPU编码
-            #     video_recorder = VideoRecorder_new.create_h264(
-            #         shm_manager=shm_manager,
-            #         fps=capture_fps,
-            #         input_pix_fmt='bgr24',
-            #         bit_rate=3000 * 1000
-            #     )
+            try:
+                # 尝试使用GPU编码
+                video_recorder = VideoRecorder_new.create_hevc_nvenc(
+                    shm_manager=shm_manager, # 需要传入共享内存管理器
+                    fps=capture_fps, 
+                    input_pix_fmt='bgr24', 
+                    bit_rate=3000 * 1000
+                )
+            except Exception as e:
+                print(f"无法初始化HEVC_NVENC编码器: {e}, 回退到CPU编码")
+                # 使用CPU编码
+                video_recorder = VideoRecorder_new.create_h264(
+                    shm_manager=shm_manager,
+                    fps=capture_fps,
+                    input_pix_fmt='bgr24',
+                    bit_rate=3000 * 1000
+                )
         assert video_recorder.fps == capture_fps
 
         # copied variables
@@ -216,7 +216,7 @@ class SingleRealsense(mp.Process):
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
+        self.stop() # 确保总是调用stop
 
     # ========= user API ===========
     def start(self, wait=True, put_start_time=None):
@@ -231,6 +231,17 @@ class SingleRealsense(mp.Process):
         #     shm_manager=self.shm_manager, 
         #     data_example=data_example)
         # # must start video recorder first to create share memories
+        # 添加初始化（必须传入数据形状）
+        if isinstance(self.video_recorder, VideoRecorder_new):
+            data_example = np.empty(
+                shape=self.resolution[::-1] + (3,),  # (h, w, 3)
+                dtype=np.uint8
+            )
+            self.video_recorder.start(
+                shm_manager=self.shm_manager,
+                data_example=data_example
+            )
+
 
         # 启动相机进程
         super().start()
@@ -238,25 +249,27 @@ class SingleRealsense(mp.Process):
             self.start_wait()
     
     def stop(self, wait=True):
-        # # 停止视频记录器
-        # self.video_recorder.stop()
-
-        # 停止相机进程
+        # 先停止相机子进程
         self.stop_event.set()
+
+        # 再停止视频录制器
+        if isinstance(self.video_recorder, VideoRecorder_new):
+            self.video_recorder.stop()  # 会触发进程退出
+
         if wait:
             self.end_wait()
 
     def start_wait(self):
+        if isinstance(self.video_recorder, VideoRecorder_new):
+            self.video_recorder.start_wait()  # 等待录制器就绪
+
         self.ready_event.wait()
 
-        # # 等待视频记录器准备好
-        # self.video_recorder.start_wait()
-    
     def end_wait(self):
         self.join()
 
-    #    # 等待视频记录器结束
-    #     self.video_recorder.end_wait()
+        if isinstance(self.video_recorder, VideoRecorder_new):
+            self.video_recorder.end_wait()  # 等待录制器结束
     
     @property
     def is_ready(self):
@@ -360,6 +373,20 @@ class SingleRealsense(mp.Process):
     
     # ========= interval API ===========
     def run(self):
+
+        # # # 使用上下文管理器安全初始化CUDA
+        # # ========= 安全初始化 CUDA =========
+        # try:
+        #     import torch
+        #     if torch.cuda.is_available():
+        #         # 使用设备上下文管理器安全初始化
+        #         with torch.cuda.device(0):
+        #             # 创建虚拟张量初始化 CUDA 上下文
+        #             dummy_tensor = torch.zeros(1).cuda()
+        #             print(f"[{self.serial_number}] CUDA context initialized in process")
+        # except Exception as e:
+        #     print(f"CUDA 初始化失败: {e}")
+        #     # 即使 CUDA 初始化失败，也继续运行
         # limit threads
         threadpool_limits(1)
         cv2.setNumThreads(1)
@@ -694,10 +721,6 @@ class SingleRealsense(mp.Process):
                     vis_data = self.vis_transform(dict(data))
                 self.vis_ring_buffer.put(vis_data, wait=False)
                 
-                # # 记录帧 - 使用零拷贝方式
-                # if self.video_recorder.is_ready():
-                #     self.video_recorder.write_img_buffer(vis_data['color'], frame_time=receive_time)
-
                 # record frame
                 rec_data = data
                 if self.recording_transform == self.transform:
@@ -705,7 +728,12 @@ class SingleRealsense(mp.Process):
                 elif self.recording_transform is not None:
                     rec_data = self.recording_transform(dict(data))
 
-                if self.video_recorder.is_ready():
+                # 修改后 - 使用零拷贝接口
+                if isinstance(self.video_recorder, VideoRecorder_new) and self.video_recorder.is_ready():
+                    img_buffer = self.video_recorder.get_img_buffer()
+                    np.copyto(img_buffer, rec_data['color'])  # 零拷贝复制
+                    self.video_recorder.write_img_buffer(img_buffer, frame_time=receive_time)
+                elif self.video_recorder.is_ready():  # 旧版兼容
                     self.video_recorder.write_frame(rec_data['color'], 
                         frame_time=receive_time)
 
@@ -745,10 +773,19 @@ class SingleRealsense(mp.Process):
                         start_time = command['recording_start_time']
                         if start_time < 0:
                             start_time = None
-                        self.video_recorder.start(video_path, start_time=start_time)
+                        if isinstance(self.video_recorder, VideoRecorder_new):
+                            # 使用新API
+                            self.video_recorder.start_recording(video_path, start_time)
+                        else:  # 旧版兼容
+                            self.video_recorder.start(video_path, start_time)
+                        # self.video_recorder.start(video_path, start_time=start_time)
                         # self.video_recorder.start_recording(video_path, start_time=start_time)
                     elif cmd == Command.STOP_RECORDING.value:
-                        self.video_recorder.stop()
+                        if isinstance(self.video_recorder, VideoRecorder_new):
+                            self.video_recorder.stop_recording()
+                        else:
+                            self.video_recorder.stop()
+                        # self.video_recorder.stop()
                         put_idx = None
                     elif cmd == Command.RESTART_PUT.value:
                         put_idx = None
@@ -757,7 +794,17 @@ class SingleRealsense(mp.Process):
 
                 iter_idx += 1
         finally:
-            self.video_recorder.stop()
+
+
+            # 统一资源清理
+            if isinstance(self.video_recorder, VideoRecorder_new):
+                self.video_recorder.stop_recording()
+            else:
+                self.video_recorder.stop()
+            # self.video_recorder.stop()
+            
+            # 关闭 RealSense 管道
+            pipeline.stop()
             rs_config.disable_all_streams()
             self.ready_event.set()
             # if self.enable_color:

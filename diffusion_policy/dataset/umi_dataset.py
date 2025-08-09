@@ -131,19 +131,19 @@ class UmiDataset(BaseDataset):
             down_sample_steps = shape_meta['obs'][key]['down_sample_steps']
             key_down_sample_steps[key] = down_sample_steps
 
-        # 确保包含所有必要键
-        required_keys = [
-            'robot0_eef_pos', 
-            'robot0_eef_rot_axis_angle',
-            'robot0_gripper_width',
-            'robot0_eef_pos_wrt_start',
-            'robot0_eef_rot_axis_angle_wrt_start'
-        ]
+        # # 确保包含所有必要键
+        # required_keys = [
+        #     'robot0_eef_pos', 
+        #     'robot0_eef_rot_axis_angle',
+        #     'robot0_gripper_width',
+        #     'robot0_eef_pos_wrt_start',
+        #     'robot0_eef_rot_axis_angle_wrt_start'
+        # ]
         
-        for key in required_keys:
-            if key not in lowdim_keys:
-                lowdim_keys.append(key)
-                print(f"添加缺失键到lowdim_keys: {key}")
+        # for key in required_keys:
+        #     if key not in lowdim_keys:
+        #         lowdim_keys.append(key)
+        #         print(f"添加缺失键到lowdim_keys: {key}")
 
 
         # solve action

@@ -46,8 +46,8 @@ class SingleRealsense(mp.Process):
             transform: Optional[Callable[[Dict], Dict]] = None,
             vis_transform: Optional[Callable[[Dict], Dict]] = None,
             recording_transform: Optional[Callable[[Dict], Dict]] = None,
-            # video_recorder: Optional[VideoRecorder] = None,
-            video_recorder: Optional[VideoRecorder_new] = None,
+            video_recorder: Optional[VideoRecorder] = None,
+            # video_recorder: Optional[VideoRecorder_new] = None,
 
             verbose=False,
         ):
@@ -139,20 +139,35 @@ class SingleRealsense(mp.Process):
 
         # create video recorder
         if video_recorder is None:
-            # video_recorder = VideoRecorder.create_h264(
-            #     fps=capture_fps, 
-            #     codec='h264',
-            #     input_pix_fmt='bgr24', 
-            #     crf=18,
-            #     thread_type='FRAME',
-            #     thread_count=1)
-            # default to nvenc GPU encoder
-            video_recorder = VideoRecorder_new.create_hevc_nvenc(
-                shm_manager=shm_manager,
+            video_recorder = VideoRecorder.create_h264(
                 fps=capture_fps, 
+                codec='h264',
                 input_pix_fmt='bgr24', 
-                bit_rate=3000*1000)
+                crf=18,
+                thread_type='FRAME',
+                thread_count=1)
+            # # 使用VideoRecorder_new的创建方法 default to nvenc GPU encoder
+            # try:
+            #     # 尝试使用GPU编码
+            #     video_recorder = VideoRecorder_new.create_hevc_nvenc(
+            #         shm_manager=shm_manager, # 需要传入共享内存管理器
+            #         fps=capture_fps, 
+            #         input_pix_fmt='bgr24', 
+            #         bit_rate=3000 * 1000
+            #     )
+            # except Exception as e:
+            #     print(f"无法初始化HEVC_NVENC编码器: {e}, 回退到CPU编码")
+            #     # 使用CPU编码
+            #     video_recorder = VideoRecorder_new.create_h264(
+            #         shm_manager=shm_manager,
+            #         fps=capture_fps,
+            #         input_pix_fmt='bgr24',
+            #         bit_rate=3000 * 1000
+            #     )
         assert video_recorder.fps == capture_fps
+
+        # copied variables
+        self.shm_manager = shm_manager
 
         # copied variables
         self.serial_number = serial_number
@@ -206,21 +221,43 @@ class SingleRealsense(mp.Process):
     # ========= user API ===========
     def start(self, wait=True, put_start_time=None):
         self.put_start_time = put_start_time
+
+        # # 创建数据示例用于初始化VideoRecorder_new
+        # shape = self.resolution[::-1]
+        # data_example = np.empty(shape=shape+(3,), dtype=np.uint8)
+        
+        # # 启动视频记录器
+        # self.video_recorder.start(
+        #     shm_manager=self.shm_manager, 
+        #     data_example=data_example)
+        # # must start video recorder first to create share memories
+
+        # 启动相机进程
         super().start()
         if wait:
             self.start_wait()
     
     def stop(self, wait=True):
+        # # 停止视频记录器
+        # self.video_recorder.stop()
+
+        # 停止相机进程
         self.stop_event.set()
         if wait:
             self.end_wait()
 
     def start_wait(self):
         self.ready_event.wait()
+
+        # # 等待视频记录器准备好
+        # self.video_recorder.start_wait()
     
     def end_wait(self):
         self.join()
 
+    #    # 等待视频记录器结束
+    #     self.video_recorder.end_wait()
+    
     @property
     def is_ready(self):
         return self.ready_event.is_set()
@@ -297,23 +334,30 @@ class SingleRealsense(mp.Process):
         path_len = len(video_path.encode('utf-8'))
         if path_len > self.MAX_PATH_LENGTH:
             raise RuntimeError('video_path too long.')
+
         self.command_queue.put({
             'cmd': Command.START_RECORDING.value,
             'video_path': video_path,
             'recording_start_time': start_time
         })
-        
+
+        # # 使用VideoRecorder_new的API启动录制
+        # self.video_recorder.start_recording(video_path, start_time)
+    
     def stop_recording(self):
         self.command_queue.put({
             'cmd': Command.STOP_RECORDING.value
         })
+
+        # # 使用VideoRecorder_new的API停止录制
+        # self.video_recorder.stop_recording()
     
     def restart_put(self, start_time):
         self.command_queue.put({
             'cmd': Command.RESTART_PUT.value,
             'put_start_time': start_time
         })
-     
+    
     # ========= interval API ===========
     def run(self):
         # limit threads
@@ -563,7 +607,9 @@ class SingleRealsense(mp.Process):
                 if self.enable_infrared:
                     data['infrared'] = np.asarray(
                         frameset.get_infrared_frame().get_data())
-                
+
+
+
                 if self.enable_sam2:
                     # 先写入再读取
                     try:
@@ -606,7 +652,8 @@ class SingleRealsense(mp.Process):
                     else:
                         data['color_mask'] = np.zeros((h, w), dtype=np.uint8)
                         data['timestamp_mask'] = data['camera_capture_timestamp']
-                    
+
+
                 
                 # apply transform
                 put_data = data
@@ -647,6 +694,10 @@ class SingleRealsense(mp.Process):
                     vis_data = self.vis_transform(dict(data))
                 self.vis_ring_buffer.put(vis_data, wait=False)
                 
+                # # 记录帧 - 使用零拷贝方式
+                # if self.video_recorder.is_ready():
+                #     self.video_recorder.write_img_buffer(vis_data['color'], frame_time=receive_time)
+
                 # record frame
                 rec_data = data
                 if self.recording_transform == self.transform:
@@ -695,6 +746,7 @@ class SingleRealsense(mp.Process):
                         if start_time < 0:
                             start_time = None
                         self.video_recorder.start(video_path, start_time=start_time)
+                        # self.video_recorder.start_recording(video_path, start_time=start_time)
                     elif cmd == Command.STOP_RECORDING.value:
                         self.video_recorder.stop()
                         put_idx = None

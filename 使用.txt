@@ -18,9 +18,17 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train
 conda activate umi
 
 umi的unet
+任务1
 HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr.zip
+python eval_real_franka_rawdp_pro.py -i /home/hy/Desktop/stagedp/data/outputs/2025.08.08/14.31.56_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
 
-python eval_real_franka_rawdp_pro.py -i /home/robot/Desktop/stagedp/data/outputs/2025.08.08/14.31.56_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
+任务2
+CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+python eval_real_franka_ds_pro.py -i /home/hy/Desktop/stagedp/data/outputs/2025.08.08/14.31.56_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+python eval_real_franka_ds_pro.py -i /home/hy/Desktop/stagedp/data/outputs/2025.08.08/23.12.30_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+
+python eval_real_franka_ds_pro.py -i /home/hy/Desktop/stagedp/data/outputs/2025.08.08/23.12.30_ds_train_diffusion_unet_timm_umi/checkpoints/epoch=0590-epoch=590.00000.ckpt  -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+
 
 
 

@@ -194,11 +194,11 @@ def create_zarr_zip(output_path, source_zarr_path, target_resolution=(224, 224),
 
 # 示例用法
 if __name__ == "__main__":
-    # 源Zarr数据集路径
-    source_zarr_path = "/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer_new.zarr"
+    # 源Zarr数据集路径 pen_0807   cup_and_saucer0805
+    source_zarr_path = "/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer_new.zarr"
     
     # 目标Zarr zip文件路径
-    output_path = "/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr.zip"
+    output_path = "/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip"
     
     # 目标图像分辨率
     target_resolution = (224, 224)  # 高度, 宽度

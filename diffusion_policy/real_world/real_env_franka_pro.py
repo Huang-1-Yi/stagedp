@@ -147,26 +147,26 @@ class RealEnvFranka:
             recording_fps       = frequency             # 使用控制频率作为录制帧率
             recording_pix_fmt   = 'rgb24'               # 使用RGB24像素格式
 
-        if record_raw_video:  
-            # video_recorder = VideoRecorder.create_h264(
-            #     fps             = recording_fps, 
-            #     codec           = 'h264',
-            #     input_pix_fmt   = recording_pix_fmt, 
-            #     crf             = video_crf,
-            #     thread_type     = 'FRAME',
-            #     thread_count    = thread_per_video
-            # )                                               # 创建视频录制器
-            # 创建视频录制器列表（每个相机一个）
-            video_recorders = []
-            bit_rate = 3000 * 1000
-            for _ in range(len(camera_serial_numbers)):
-                video_recorders.append(
-                    VideoRecorder_new.create_hevc_nvenc(
-                        fps             = recording_fps,
-                        input_pix_fmt   = 'bgr24',
-                        bit_rate        = bit_rate
-                    )
+        # ============== 修改视频录制器初始化 ==============
+        # conda remove ffmpeg      sudo apt install ffmpeg  which ffmpeg
+        # 创建视频录制器列表（每个相机一个）
+        video_recorders = []
+        for _ in range(len(camera_serial_numbers)):
+            try:
+                # 尝试使用 GPU 编码器
+                recorder = VideoRecorder_new.create_hevc_nvenc(
+                    fps=recording_fps,
+                    input_pix_fmt=recording_pix_fmt,
+                    bit_rate=3000 * 1000  # 3 Mbps
                 )
+            except Exception as e:
+                print(f"GPU encoder failed: {e}, fallback to CPU")
+                recorder = VideoRecorder_new.create_h264(
+                    fps=recording_fps,
+                    input_pix_fmt=recording_pix_fmt,
+                    crf=video_crf
+                )
+            video_recorders.append(recorder)
 
 
         realsense = MultiRealsense(
@@ -187,7 +187,7 @@ class RealEnvFranka:
             transform       =transform,                 # 转换
             vis_transform   =vis_transform,             # 可视化转换
             recording_transform=recording_transfrom,    # 记录转换
-            video_recorder  =video_recorders,            # 视频记录器
+            video_recorder  =video_recorders,           # 视频记录器使用 VideoRecorder_new 列表
             verbose         =False                      # 是否显示详细信息
         )   # 创建Realsense多相机管理器
         
@@ -617,8 +617,9 @@ class RealEnvFranka:
                 dt=1 / self.frequency,
                 image_shape=self.obs_image_resolution[::-1] + (3,)  # (H, W, C)
                 )
+            
+            ###################新增rgb图像mask累加器###################
             if self.enable_sam2:
-                ###################新增rgb图像mask累加器###################
                 self.image_mask_accumulators[cam_idx] = TimestampMaskAccumulator(
                     start_time=start_time,
                     dt=1 / self.frequency,

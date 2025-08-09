@@ -116,9 +116,9 @@ def rot_from_directions(from_vec, to_vec):
 def normalize(vec, eps=1e-12):
     norm = np.linalg.norm(vec, axis=-1)
     norm = np.maximum(norm, eps)
-    return vec / norm
-    # out = (vec.T / norm).T
-    # return out
+    # return vec / norm
+    out = (vec.T / norm).T
+    return out
 
 def rot6d_to_mat(d6):
     a1, a2 = d6[..., :3], d6[..., 3:]

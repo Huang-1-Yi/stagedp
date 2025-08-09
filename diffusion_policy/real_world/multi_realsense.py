@@ -45,8 +45,8 @@ class MultiRealsense:
         transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
         vis_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
         recording_transform: Optional[Union[Callable[[Dict], Dict], List[Callable]]]=None,
-        video_recorder: Optional[Union[VideoRecorder, List[VideoRecorder]]]=None,
-        # video_recorder: Optional[Union[VideoRecorder_new, List[VideoRecorder_new]]]=None,
+        # video_recorder: Optional[Union[VideoRecorder, List[VideoRecorder]]]=None,
+        video_recorder: Optional[Union[VideoRecorder_new, List[VideoRecorder_new]]]=None,
         
         verbose=False
         ):
@@ -67,8 +67,8 @@ class MultiRealsense:
         vis_transform = repeat_to_list(vis_transform, n_cameras, Callable)
         recording_transform = repeat_to_list(recording_transform, n_cameras, Callable)
 
-        video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder)
-        # video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder_new)
+        # video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder)
+        video_recorder = repeat_to_list(video_recorder, n_cameras, VideoRecorder_new)
 
         cameras = dict()
         # 为每个摄像头创建SingleRealsense对象，保存到self.cameras字典
@@ -104,7 +104,12 @@ class MultiRealsense:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
+        try:
+            self.stop()
+        finally:
+            # 确保共享内存管理器被正确关闭
+            if hasattr(self, 'shm_manager') and self.shm_manager is not None:
+                self.shm_manager.shutdown()
     
     @property
     def n_cameras(self):
@@ -137,12 +142,24 @@ class MultiRealsense:
 
     # 阻塞直到所有摄像头完成启动/停止
     def start_wait(self):
+        # 先等待所有视频录制器就绪
+        for camera in self.cameras.values():
+            if isinstance(camera.video_recorder, VideoRecorder_new):
+                camera.video_recorder.start_wait()
+        
+        # 再等待所有摄像头就绪
         for camera in self.cameras.values():
             camera.start_wait()
 
     def stop_wait(self):
+        # 先等待所有摄像头停止
         for camera in self.cameras.values():
             camera.join()
+            
+        # 再等待所有视频录制器停止
+        for camera in self.cameras.values():
+            if isinstance(camera.video_recorder, VideoRecorder_new):
+                camera.video_recorder.end_wait()
     
     # 创建一个get_obs_resize函数，传入k和out的同时，传入一个shape，函数会像get一样得到最新几帧
     def get(self, k=None, out=None) -> Dict[int, Dict[str, np.ndarray]]:
@@ -300,17 +317,22 @@ class MultiRealsense:
     # 为每个摄像头创建MP4文件
     def start_recording(self, video_path: Union[str, List[str]], start_time: float):
         if isinstance(video_path, str):
-            # directory
+            # directory 创建目录结构
             video_dir = pathlib.Path(video_path)
             assert video_dir.parent.is_dir()
             video_dir.mkdir(parents=True, exist_ok=True)
+
+            # 为每个摄像头创建唯一的视频文件路径
             video_path = list()
             for i in range(self.n_cameras):
+                # 使用摄像头序列号作为文件名前缀
+                # serial = camera.serial_number  # joinpath(f'{serial}_{i}.mp4')
                 video_path.append(
                     str(video_dir.joinpath(f'{i}.mp4').absolute()))
         assert len(video_path) == self.n_cameras
 
         for i, camera in enumerate(self.cameras.values()):
+            # 添加序列号到录制命令
             camera.start_recording(video_path[i], start_time)
 
     # 停止所有录制

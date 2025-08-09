@@ -1489,9 +1489,13 @@ if __name__ == "__main__":
 
     target_key = "data/camera_0"  # 示例键
     # zarr_path = "/home/hy/Desktop/dp_0314/data/button_grb_0730/replay_buffer.zarr"
-    zarr_path = "/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr"
-    stages_output_path = "./data/cup_and_saucer0805/episode_stages"
-    stages_output_dir="./data/cup_and_saucer0805/episode_images"
+    # zarr_path = "/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr"
+    # stages_output_path = "./data/cup_and_saucer0805/episode_stages"
+    # stages_output_dir="./data/cup_and_saucer0805/episode_images"
+
+    zarr_path = "/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr"
+    stages_output_path = "./data/pen_0807/episode_stages"
+    stages_output_dir="./data/pen_0807/episode_images"
     try:
         # 创建检查器
         inspector = ZarrInspector(zarr_path)

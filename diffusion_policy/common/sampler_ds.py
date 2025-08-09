@@ -59,7 +59,7 @@ class SequenceSampler:
 
         # load gripper_width
         gripper_width = replay_buffer['robot0_gripper_width'][:, 0]
-        gripper_width_threshold = 0.08
+        gripper_width_threshold = 0.08  # 夹爪宽度阈值
         self.repeat_frame_prob = repeat_frame_prob
 
         # create indices, including (current_idx, start_idx, end_idx)

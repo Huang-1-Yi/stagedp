@@ -310,12 +310,14 @@ class VideoRecorder_new(mp.Process):
             'cmd': self.Command.START_RECORDING.value,
             'video_path': video_path
         })
+        print(f'开始录制视频到 {video_path} ,起始时间 {start_time}...')
     
     def stop_recording(self):
         self.cmd_queue.put({
             'cmd': self.Command.STOP_RECORDING.value
         })
         self._reset_state()
+        print('停止录制视频')
     
     def write_frame(self, img: np.ndarray, frame_time=None):
         if not self.is_ready():
@@ -338,6 +340,7 @@ class VideoRecorder_new(mp.Process):
             'img': img,
             'repeat': n_repeats
         })
+        # print(f'写入一帧图像，重复次数: {n_repeats}, 当前时间: {frame_time}')
     
     def get_img_buffer(self):
         """

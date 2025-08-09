@@ -63,3 +63,5 @@ dependencies:
     - diffusers==0.18.2
     - peft==0.11.1
     - diffusers==0.30.0
+    - zerorpc==0.6.3
+    - pyrealsense2==2.56.5.9235
