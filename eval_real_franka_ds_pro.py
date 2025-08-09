@@ -180,7 +180,9 @@ def main(input,
         policy = workspace.model
         if cfg.training.use_ema:
             policy = workspace.ema_model
-
+        
+        Trainable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+        print(f'模型可训练参数 Trainable params: {Trainable_params/ 1e6}M') # 171.27361M
 
         # 移动到设备
         device = torch.device('cuda')

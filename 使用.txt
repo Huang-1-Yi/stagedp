@@ -7,7 +7,7 @@ conda activate dp0628
 HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train_diffusion_unet_real_image_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
 
 python eval_real_franka_rawdp_pro.py -i /home/robot/Desktop/stagedp/data/outputs/2025.08.08/01.52.33_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
-
+# CUDA_VISIBLE_DEVICES=1  python eval_real_franka_rawdp.py -i /home/hy/Desktop/stagedp/data/outputs/2025.08.08/01.52.33_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt  -o data/0808 -ri 192.168.0.168
 
 
 原始dp的tf
