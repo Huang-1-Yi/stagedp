@@ -106,7 +106,8 @@ policy:
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
-  input_pertub: 0.1 # reference: https://github.com/forever208/DDPM-IP
+  input_pertub: 0.0
+  # input_pertub: 0.1 # reference: https://github.com/forever208/DDPM-IP
   # train multiple diffusion steps per obs encoder forward pass
   # doing this too much will cause instability!
   train_diffusion_n_samples: 1

@@ -5,9 +5,12 @@ name: umi
 # ​​相对其他机器人​​：如 robot0_eef_pos_wrt_robot1表示机器人0相对于机器人1的位置
 # ​​相对任务起点​​：如 eef_pos_wrt_start表示机器人相对于任务开始时的位置
 # ​​增量位姿（delta）​​：仅用于动作，表示相对于当前位姿的增量（变化量），通常用于连续控制。
-camera_obs_latency: 0.125 # 125ms
-robot_obs_latency: 0.05   # 50ms
-gripper_obs_latency: 0.05 # 50ms
+# camera_obs_latency: 0.125 # 125ms
+# robot_obs_latency: 0.05   # 50ms
+# gripper_obs_latency: 0.05 # 50ms
+camera_obs_latency: 0.0 # 125ms
+robot_obs_latency: 0.0   # 50ms
+gripper_obs_latency: 0.0 # 50ms
 dataset_frequeny: 0 #59.94
 # obs_down_sample_steps: 3 # 3, 1
 obs_down_sample_steps: 1 # 3, 1
