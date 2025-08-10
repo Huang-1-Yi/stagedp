@@ -3,6 +3,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+# 忽略训练使用文件夹
+训练使用/
 
 bin
 logs
