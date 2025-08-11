@@ -88,7 +88,6 @@ class RealEnvFranka:
             ):
         self.enable_depth = enable_depth                # 是否启用深度
         self.enable_sam2 = enable_sam2                  # 是否启用sam2
-        self.enable_predictor = enable_predictor        # 是否启用阶段预测器
         ###########################################################
         ##########相机的参数设置和可视化
         ###########################################################
@@ -147,14 +146,6 @@ class RealEnvFranka:
             recording_fps       = frequency             # 使用控制频率作为录制帧率
             recording_pix_fmt   = 'rgb24'               # 使用RGB24像素格式
 
-        # video_recorder = VideoRecorder.create_h264(
-        #     fps             = recording_fps, 
-        #     codec           = 'h264',
-        #     input_pix_fmt   = recording_pix_fmt, 
-        #     crf             = video_crf,
-        #     thread_type     = 'FRAME',
-        #     thread_count    = thread_per_video
-        # )                                               # 创建视频录制器
         # ============== 修改视频录制器初始化 ==============
         # conda remove ffmpeg      sudo apt install ffmpeg  which ffmpeg
         # 创建视频录制器列表（每个相机一个）
@@ -165,20 +156,6 @@ class RealEnvFranka:
                     input_pix_fmt=recording_pix_fmt,
                     crf=video_crf
                 )
-            # try:
-            #     # 尝试使用 GPU 编码器
-            #     recorder = VideoRecorder_new.create_hevc_nvenc(
-            #         fps=recording_fps,
-            #         input_pix_fmt='bgr24',  # recording_pix_fmt,
-            #         bit_rate=3000 * 1000  # 3 Mbps
-            #     )
-            # except Exception as e:
-            #     print(f"GPU encoder failed: {e}, fallback to CPU")
-            #     recorder = VideoRecorder_new.create_h264(
-            #         fps=recording_fps,
-            #         input_pix_fmt=recording_pix_fmt,
-            #         crf=video_crf
-            #     )
             video_recorders.append(recorder)
 
 
@@ -214,30 +191,6 @@ class RealEnvFranka:
                 rgb_to_bgr=False
             )                                           # 创建多相机可视化器
         
-        if self.enable_predictor:  # 如果启用阶段预测器
-            model_path = "/home/hy/Desktop/dp_0314/protas/models/0626/data_camera_0_custom_i3d/split_1/epoch-200.model"
-            mapping_file = "/home/hy/Desktop/dp_0314/protas/data/data_camera_0_custom_i3d/mapping.txt"
-            graph_path = "/home/hy/Desktop/dp_0314/protas/data/data_camera_0_custom_i3d/graph/graph.pkl"
-            device = 'cuda'
-            history_size = 64
-            self.predictor = EnhancedStagePredictor(
-                model_path=model_path,
-                mapping_file=mapping_file,
-                graph_path=graph_path,
-                device=device,
-                history_size=history_size, 
-            )
-            model_path1 = "/home/hy/Desktop/dp_0314/protas/models/0626/data_camera_1_custom_i3d/split_1/epoch-200.model"
-            mapping_file1 = "/home/hy/Desktop/dp_0314/protas/data/data_camera_1_custom_i3d/mapping.txt"
-            graph_path1 = "/home/hy/Desktop/dp_0314/protas/data/data_camera_1_custom_i3d/graph/graph.pkl"
-            self.predictor1 = EnhancedStagePredictor(
-                model_path=model_path1,
-                mapping_file=mapping_file1,
-                graph_path=graph_path1,
-                device=device,
-                history_size=history_size,
-            )
-
         ########################################################################
         #############机器人的参数设置
         ########################################################################
@@ -297,10 +250,8 @@ class RealEnvFranka:
         if self.enable_depth:  # 如果启用深度图像
             self.depth_scale = depth_scale
             self.depth_dtype = depth_dtype
-            self.depth_accumulators = dict()                    # 深度图像累加器
         self.enable_pointcloud = enable_pointcloud              # 是否启用点云
-        if self.enable_pointcloud:
-            self.point_cloud_accumulators = dict()              # 点云累加器 
+
         
         self.start_time = None                                  # 初始化开始时间
         self.is_saving = False                                  # 新增标志位
@@ -364,162 +315,92 @@ class RealEnvFranka:
 
     # ========= async env API ===========
     # 获取当前的观察数据，包括相机图像和机器人状态
-    # def get_obs(self) -> dict:
-    #     "observation dict"
-    #     assert self.is_ready                    # 确保环境已准备好
-        
-    #     # ===================== 1. 获取原始数据 =====================
-    #     # get data获取数据,both have more than n_obs_steps data
-    #     # 当前情况下，每次从相机获取6帧数据，但实际只需要对齐n_obs_steps=2帧
-    #     # 注意，umi修改了k的定义
-    #     # n_obs_steps=2, video_capture_fps=30, frequency=10 → k=6
-    #     k = math.ceil(self.n_obs_steps * (self.video_capture_fps / self.frequency))
-    #     # self.last_realsense_data = self.realsense.get(k=k, out=self.last_realsense_data)      # 获取Realsense数
-    #     if self.enable_sam2:
-    #         self.last_realsense_data = self.realsense.get_sam2(k=k, out=self.last_realsense_data)   # 获取Realsense数
-    #     else:
-    #         self.last_realsense_data = self.realsense.get(k=k, out=self.last_realsense_data)
-        
-    #     self.last_robot_data = self.robot.get_all_state()                                       # 获取机器人所有状态
-
-    #     # ===================== 2. 生成统一对齐时间戳 =====================
-    #     # align camera obs timestamps
-    #     dt = 1 / self.frequency
-    #     # 获取最后一个时间戳
-    #     last_camera_timestamps = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()]) 
-    #     obs_align_timestamps = last_camera_timestamps - (np.arange(self.n_obs_steps)[::-1] * dt)    # 对齐观察时间戳
-
-    #     # 强制时间戳长度与 n_obs_steps 一致
-    #     assert len(obs_align_timestamps) == self.n_obs_steps, "时间轴长度错误"
-
-    #     # ===================== 3. 数据对齐核心逻辑 =====================
-    #     camera_obs = dict()                                         # 初始化相机观察字典
-    #     if self.enable_depth:
-    #         depth_obs = dict()                                      # 新增深度观测字典
-    #     if self.enable_pointcloud:
-    #         point_cloud_obs = dict()                                # 新增点云观测字典
-    #     predictor_obs = dict()                                  # 初始化预测器观察字典
-
-
-    #     for camera_idx, value in self.last_realsense_data.items():  # 遍历每个相机的数据
-
-    #         # print("value['color'].shape==",value['color'].shape,"value['color_mask'].shape==",value['color_mask'].shape)
-
-    #         # ==================================================
-    #         # ======= 目前eval时需要注释这段图像累加器代码 ========
-    #         # ==================================================
-    #         if self.obs_accumulator is not None:
-    #             self.image_accumulators[camera_idx].put(
-    #                 images=value['color'],                          # shape (N, 480, 640, 3)
-    #                 timestamps=value['timestamp']                   # shape (N,)
-    #             )
-    #             if self.enable_sam2:
-    #                 self.image_mask_accumulators[camera_idx].put(
-    #                     masks=value['color_mask'],                  # shape (N, 480, 640, 3)
-    #                     timestamps=value['timestamp_mask']          # shape (N,)
-    #                 )
-            
-    #         # 处理深度图像
-    #         if self.enable_depth and 'depth' in value:
-    #             resized_depths = []
-    #             for depth in value['depth']:
-    #                 # 深度图像缩放和类型转换
-    #                 resized_depth = cv2.resize(depth, self.obs_image_resolution)  # 缩放深度图像到 640x480
-    #                 if self.depth_dtype == np.uint16:
-    #                     resized_depth = (resized_depth * self.depth_scale).astype(np.uint16)
-    #                 resized_depths.append(resized_depth)
-    #             resized_depths = np.array(resized_depths)
-
-    #             if self.obs_accumulator is not None:
-    #                 self.depth_accumulators[camera_idx].put(
-    #                     depths=resized_depths,
-    #                     timestamps=value['timestamp']
-    #                 )
-            
-    #         # 处理点云数据
-    #         if self.enable_pointcloud and 'point_cloud' in value:   # 新增点云的数据处理（确保条件正确）
-    #             point_cloud_data = value['point_cloud']  # 假设点云数据在这里
-    #             point_cloud_data = np.array(point_cloud_data)  # 转为NumPy数组
-    #             # 将点云数据放入累加器
-    #             if self.obs_accumulator is not None:
-    #                 self.point_cloud_accumulators[camera_idx].put(
-    #                     point_clouds=point_cloud_data,
-    #                     timestamps=value['timestamp']
-    #                 )
-
-    #         # 3.1 获取历史帧索引（用于观测返回）
-    #         this_timestamps = value['timestamp']                    # 获取当前相机的时间戳
-    #         aligned_idxs = list()                                   # 初始化索引列表
-    #         for t in obs_align_timestamps:                          # 遍历对齐的时间戳
-    #             is_before_idxs = np.nonzero(this_timestamps < t)[0] # 找到所有小于当前时间戳的索引
-    #             if len(is_before_idxs) > 0:                         # 如果存在小于当前时间戳的索引
-    #                 aligned_idxs.append(is_before_idxs[-1])         # 取最后一个小于当前时间戳的索引，添加到索引列表中
-    #             else:
-    #                 aligned_idxs.append(0) # 如果没有小于当前时间戳的索引，将0添加到索引列表中
-    #         # 对齐rgb数据
-    #         camera_obs[f'camera_{camera_idx}'] = value['color'][aligned_idxs] # 将颜色数据映射到相机观察字典中，(n_obs_steps, H, W, 3)
-
-    #         if self.enable_predictor:
-    #             if camera_idx == 0:  # 仅对第一个相机进行阶段预测
-    #                 # print(f"[RealEnv] Camera0帧形状: {camera_obs[f'camera_{camera_idx}'][-1].shape}")  # 应该是 (H, W, 3)
-    #                 # predictor_obs[f'camera_{camera_idx}_stage'], predictor_obs[f'camera_{camera_idx}_progress'], predictor_obs[f'camera_{camera_idx}_stage_changed'] = self.predictor.process_frame(camera_obs[f'camera_{camera_idx}'][-1])
-    #                 # 调用预测器处理当前帧
-    #                 stage, progress, changed = self.predictor.process_frame(camera_obs[f'camera_{camera_idx}'][-1])
-    #             else:
-    #                 stage, progress, changed = self.predictor1.process_frame(camera_obs[f'camera_{camera_idx}'][-1])
-    #             # === 关键修复: 将结果封装为列表 ===
-    #             predictor_obs[f'camera_{camera_idx}_stage'] = [stage]
-    #             predictor_obs[f'camera_{camera_idx}_progress'] = [progress]
-    #             predictor_obs[f'camera_{camera_idx}_stage_changed'] = [int(changed)]
-    #         if self.enable_sam2:
-    #             # mask_img =cv2.resize(value['color_mask'][aligned_idxs], (320, 240), interpolation=cv2.INTER_NEAREST)
-    #             camera_obs[f'camera_{camera_idx}_mask'] = value['color_mask'][aligned_idxs] # 将颜色数据映射到相机观察字典中，(n_obs_steps, H, W, 3)
-
-    #         if self.enable_depth:
-    #             # 对齐深度数据对齐
-    #             depth_obs[f'camera_{camera_idx}_depth'] = resized_depths[aligned_idxs]
-    #         if self.enable_pointcloud:
-    #             # 对齐点云数据对齐
-    #             point_cloud_obs[f'camera_{camera_idx}_point_cloud'] = point_cloud_data[aligned_idxs]
-            
-    #     # 机器人数据对齐 align robot obs
-    #     robot_timestamps = self.last_robot_data['robot_receive_timestamp']  # 获取机器人的时间戳
-    #     aligned_idxs = list()                                               # 初始化索引列表
-    #     for t in obs_align_timestamps:                                      # 使用历史时间轴，遍历对齐的时间戳
-    #         is_before_idxs = np.nonzero(robot_timestamps < t)[0]            # 找到所有小于当前时间戳的索引
-    #         if len(is_before_idxs) > 0:
-    #             aligned_idxs.append(is_before_idxs[-1])
-    #         else:
-    #             aligned_idxs.append(0)                                      # 如果没有小于当前时间戳的索引，将0添加到索引列表中
-        
-    #     # ===================== 4.观察字典映射 ====================
-    #     robot_obs_raw = dict()                                      # 初始化机器人原始观察字典
-    #     for k, v in self.last_robot_data.items():                   # 遍历机器人的数据
-    #         if k in self.obs_key_map:                               # 如果键在观察键映射中
-    #             robot_obs_raw[self.obs_key_map[k]] = v              # 将值映射到机器人原始观察字典中
-
-    #     robot_obs = dict()                                          # 初始化机器人观察字典
-    #     for k, v in robot_obs_raw.items():                          # 遍历机器人原始观察字典
-    #         robot_obs[k] = v[aligned_idxs]                          # 将数据映射到机器人观察字典中
-
-    #     # accumulate obs
-    #     if self.obs_accumulator is not None:
-    #         self.obs_accumulator.put(
-    #             robot_obs_raw,
-    #             robot_timestamps
-    #         )
-
-    #     # ===================== 7. 构建返回数据 ====================
-    #     obs_data = dict(camera_obs)                                 # 初始化观察数据为相机观察数据
-    #     obs_data.update(robot_obs)                                  # 更新观察数据为机器人观察数据
-    #     if self.enable_predictor:
-    #         obs_data.update(predictor_obs)                            # 更新观察数据为预测器观察数据
-    #     obs_data['timestamp'] = obs_align_timestamps                # 设置观察数据的时间戳
-        
-    #     # obs_data['stage'] = np.array([[0], [0]], dtype=np.int64)  # 设置观察数据的阶段信息
-    #     return obs_data                                             # 返回观察数据
-
     def get_obs(self) -> dict:
+        "observation dict"
+        assert self.is_ready                    # 确保环境已准备好
+        
+        # ===================== 1. 获取原始数据 =====================
+        # get data获取数据,both have more than n_obs_steps data
+        # 当前情况下，每次从相机获取6帧数据，但实际只需要对齐n_obs_steps=2帧
+        # 注意，umi修改了k的定义
+        # n_obs_steps=2, video_capture_fps=30, frequency=10 → k=6
+        k = math.ceil(self.n_obs_steps * (self.video_capture_fps / self.frequency))
+        # self.last_realsense_data = self.realsense.get(k=k, out=self.last_realsense_data)      # 获取Realsense数
+        if self.enable_sam2:
+            self.last_realsense_data = self.realsense.get_sam2(k=k, out=self.last_realsense_data)   # 获取Realsense数
+        else:
+            self.last_realsense_data = self.realsense.get(k=k, out=self.last_realsense_data)
+        
+        self.last_robot_data = self.robot.get_all_state()                                       # 获取机器人所有状态
+
+        # ===================== 2. 生成统一对齐时间戳 =====================
+        # align camera obs timestamps
+        dt = 1 / self.frequency
+        # 获取最后一个时间戳
+        last_camera_timestamps = np.max([x['timestamp'][-1] for x in self.last_realsense_data.values()]) 
+        obs_align_timestamps = last_camera_timestamps - (np.arange(self.n_obs_steps)[::-1] * dt)    # 对齐观察时间戳
+
+        # 强制时间戳长度与 n_obs_steps 一致
+        assert len(obs_align_timestamps) == self.n_obs_steps, "时间轴长度错误"
+
+        # ===================== 3. 数据对齐核心逻辑 =====================
+        camera_obs = dict()                                         # 初始化相机观察字典
+        for camera_idx, value in self.last_realsense_data.items():  # 遍历每个相机的数据
+            if self.obs_accumulator is not None:
+                self.image_accumulators[camera_idx].put(
+                    images=value['color'],                          # shape (N, 480, 640, 3)
+                    timestamps=value['timestamp']                   # shape (N,)
+                )
+
+            # 3.1 获取历史帧索引（用于观测返回）
+            this_timestamps = value['timestamp']                    # 获取当前相机的时间戳
+            aligned_idxs = list()                                   # 初始化索引列表
+            for t in obs_align_timestamps:                          # 遍历对齐的时间戳
+                is_before_idxs = np.nonzero(this_timestamps < t)[0] # 找到所有小于当前时间戳的索引
+                if len(is_before_idxs) > 0:                         # 如果存在小于当前时间戳的索引
+                    aligned_idxs.append(is_before_idxs[-1])         # 取最后一个小于当前时间戳的索引，添加到索引列表中
+                else:
+                    aligned_idxs.append(0) # 如果没有小于当前时间戳的索引，将0添加到索引列表中
+            # 对齐rgb数据
+            camera_obs[f'camera_{camera_idx}'] = value['color'][aligned_idxs] # 将颜色数据映射到相机观察字典中，(n_obs_steps, H, W, 3)
+
+        # 机器人数据对齐 align robot obs
+        robot_timestamps = self.last_robot_data['robot_receive_timestamp']  # 获取机器人的时间戳
+        aligned_idxs = list()                                               # 初始化索引列表
+        for t in obs_align_timestamps:                                      # 使用历史时间轴，遍历对齐的时间戳
+            is_before_idxs = np.nonzero(robot_timestamps < t)[0]            # 找到所有小于当前时间戳的索引
+            if len(is_before_idxs) > 0:
+                aligned_idxs.append(is_before_idxs[-1])
+            else:
+                aligned_idxs.append(0)                                      # 如果没有小于当前时间戳的索引，将0添加到索引列表中
+        
+        # ===================== 4.观察字典映射 ====================
+        robot_obs_raw = dict()                                      # 初始化机器人原始观察字典
+        for k, v in self.last_robot_data.items():                   # 遍历机器人的数据
+            if k in self.obs_key_map:                               # 如果键在观察键映射中
+                robot_obs_raw[self.obs_key_map[k]] = v              # 将值映射到机器人原始观察字典中
+
+        robot_obs = dict()                                          # 初始化机器人观察字典
+        for k, v in robot_obs_raw.items():                          # 遍历机器人原始观察字典
+            robot_obs[k] = v[aligned_idxs]                          # 将数据映射到机器人观察字典中
+
+        # accumulate obs
+        if self.obs_accumulator is not None:
+            self.obs_accumulator.put(
+                robot_obs_raw,
+                robot_timestamps
+            )
+
+        # ===================== 7. 构建返回数据 ====================
+        obs_data = dict(camera_obs)                                 # 初始化观察数据为相机观察数据
+        obs_data.update(robot_obs)                                  # 更新观察数据为机器人观察数据
+        obs_data['timestamp'] = obs_align_timestamps                # 设置观察数据的时间戳
+        
+        # obs_data['stage'] = np.array([[0], [0]], dtype=np.int64)  # 设置观察数据的阶段信息
+        return obs_data                                             # 返回观察数据
+
+
+    def get_obs_umi(self) -> dict:
         "observation dict"
         assert self.is_ready
         
@@ -648,7 +529,6 @@ class RealEnvFranka:
     def get_robot_state(self):
         return self.robot.get_state()                               # 获取机器人状态
 
-    # recording API
     # 开始一个新的记录集，初始化观察和动作累加器，并开始记录视频
     def start_episode(self, start_time=None):
         "Start recording and return first obTimestampActionAccumulators"
@@ -697,14 +577,6 @@ class RealEnvFranka:
             start_time=start_time,
             dt=1/self.frequency
         )
-        # self.action_accumulator = TimestampActionAccumulator(       # 创建动作累加器
-        #     start_time=start_time,
-        #     dt=1/self.frequency
-        # )
-        # self.stage_accumulator = TimestampActionAccumulator(        # 创建阶段累加器
-        #     start_time=start_time,
-        #     dt=1/self.frequency
-        # )
         # 创建相机数据观测累加器
         for cam_idx in range(n_cameras):
             self.image_accumulators[cam_idx] = TimestampImageAccumulator(
@@ -712,33 +584,8 @@ class RealEnvFranka:
                 dt=1 / self.frequency,
                 image_shape=self.obs_image_resolution[::-1] + (3,)  # (H, W, C)
                 )
-            if self.enable_sam2:
-                ###################新增rgb图像mask累加器###################
-                self.image_mask_accumulators[cam_idx] = TimestampMaskAccumulator(
-                    start_time=start_time,
-                    dt=1 / self.frequency,
-                    mask_shape=self.obs_image_resolution[::-1],     # (H, W)  (480,640)
-                    mask_dtype=np.uint8,                            # mask数据类型
-                    )
             
-            ###################新增深度图像累加器#####################
-            if self.enable_depth:
-                self.depth_accumulators[cam_idx] = TimestampDepthAccumulator(
-                    start_time=start_time,
-                    dt=1 / self.frequency,
-                    depth_shape=self.obs_image_resolution[::-1],    # 深度图像形状
-                    depth_dtype=self.depth_dtype
-                )
             print(f"image_shape: {self.obs_image_resolution[::-1] + (3,)}")
-
-            # 为每个摄像头初始化累加器
-            if self.enable_pointcloud:
-                for cam_idx in range(n_cameras):
-                    self.point_cloud_accumulators[cam_idx] = TimestampPointCloudAccumulator(
-                        start_time=start_time,
-                        dt=1 / self.frequency,
-                        point_shape=(10000, 6)
-                    )
         print(f'Episode {episode_id} started!')                     # 打印开始消息
 
 
@@ -756,10 +603,6 @@ class RealEnvFranka:
         assert self.is_ready                                        # 确保环境已准备好
         self.is_saving = True                                       # 进入保存状态
 
-        # 内存使用监控
-        process = psutil.Process()
-        mem_before = process.memory_info().rss
-        print(f"[Memory] Pre-processing: {mem_before / 1024**2:.2f} MB")
 
         # self.realsense.stop_recording()                             # 停止记录视频
         # ============== 修改录制停止逻辑 ==============
@@ -810,35 +653,11 @@ class RealEnvFranka:
 
             camera_timestamps = {}
             for cam_idx, accum in self.image_accumulators.items():
-                print(f"depth_{cam_idx} timestamps: {len(accum.timestamps)}")
+                print(f"camera_{cam_idx} timestamps: {len(accum.timestamps)}")
                 print(f"camera_{cam_idx} images: {len(accum.images)}")
                 # 将每个相机的时间戳存储在字典中，key 为相机的索引，value 为对应的时间戳数组
                 camera_timestamps[cam_idx] = accum.timestamps
             
-            if self.enable_sam2:
-                image_timestamps = {}
-                for cam_idx, accum in self.image_mask_accumulators.items():
-                    print(f"mask_{cam_idx} timestamps: {len(accum.timestamps)}")
-                    print(f"mask_{cam_idx} images: {len(accum.masks)}")
-                    # 将每个相机的时间戳存储在字典中，key 为相机的索引，value 为对应的时间戳数组
-                    image_timestamps[cam_idx] = accum.timestamps
-            
-            if self.enable_depth:
-                # 获取深度数据的时间戳
-                depth_timestamps = {}
-                for cam_idx, accum in self.depth_accumulators.items():
-                    print(f"depth_{cam_idx} timestamps: {len(accum.timestamps)}")
-                    print(f"depth_{cam_idx} depths: {len(accum.depths)}")
-                    depth_timestamps[cam_idx] = accum.timestamps
-            
-            # 获取点云数据的时间戳
-            if self.enable_pointcloud:
-                point_cloud_timestamps = {}
-                for cam_idx, accum in self.point_cloud_accumulators.items():
-                    print(f"point_cloud_{cam_idx} timestamps: {len(accum.timestamps)}")
-                    print(f"point_cloud_{cam_idx} point_clouds: {len(accum.point_clouds)}")
-                    point_cloud_timestamps[cam_idx] = accum.timestamps
-
             if self.verbose:                            # 使用实际理论长度校验
                 # 计算各累积器的理论长度
                 obs_len = len(self.obs_accumulator)
@@ -870,21 +689,8 @@ class RealEnvFranka:
                 "action": len(self.action_accumulator),
                 "stage": len(self.stage_accumulator),
                 **{f"camera_{cam_idx}": len(accum.images) for cam_idx, accum in self.image_accumulators.items()},
-                # **{f"camera_{cam_idx}_mask": len(accum.masks) for cam_idx, accum in self.image_mask_accumulators.items()}
             }
             
-            if self.enable_sam2:
-                data_lengths.update(
-                    **{f"camera_{cam_idx}_mask": len(accum.masks) for cam_idx, accum in self.image_mask_accumulators.items()}
-                )
-            if self.enable_depth:
-                data_lengths.update(
-                    **{f"depth_{cam_idx}": len(accum.depths) for cam_idx, accum in self.depth_accumulators.items()}
-                )
-            if self.enable_pointcloud:
-                data_lengths.update(
-                    **{f"point_cloud_{cam_idx}": len(accum.point_clouds) for cam_idx, accum in self.point_cloud_accumulators.items()}
-                )
             # 找到最小公共长度
             n_steps = min(data_lengths.values())
             if n_steps == 0:
@@ -908,45 +714,9 @@ class RealEnvFranka:
                     print(f"Camera {cam_idx} 数据异常: {e}")
                     episode[f'camera_{cam_idx}'] = np.zeros((n_steps, *self.obs_image_resolution, 3), dtype=np.uint8)
 
-            # 添加预测数据
-            if self.enable_sam2:
-                for cam_idx, accum in self.image_mask_accumulators.items():
-                    try:
-                        episode[f'camera_{cam_idx}_mask'] = self.image_mask_accumulators[cam_idx].masks[:n_steps]
-                    except Exception as e:
-                        print(f"Camera {cam_idx} 预测数据异常: {e}")
-                        episode[f'camera_{cam_idx}_mask'] = np.zeros((n_steps, *self.obs_image_resolution), dtype=np.uint8)
-                
-            # 添加深度数据（含独立时间戳）
-            if self.enable_depth:
-                episode.update({
-                    # 深度数据
-                    **{f'camera_{cam_idx}_depth': accum.depths[:n_steps]
-                    for cam_idx, accum in self.depth_accumulators.items()},
-                    
-                    # 深度时间戳
-                    **{f'camera_{cam_idx}_depth_timestamps': accum.timestamps[:n_steps]
-                    for cam_idx, accum in self.depth_accumulators.items()}
-                })
-            
-            # # 添加点云数据（含独立时间戳）
-            if self.enable_pointcloud:
-                episode.update({
-                    # 点云数据
-                    **{f'camera_{cam_idx}_point_cloud': accum.point_clouds[:n_steps]
-                    for cam_idx, accum in self.point_cloud_accumulators.items()},
-                    
-                    # 点云时间戳
-                    **{f'camera_{cam_idx}_point_cloud_timestamps': accum.timestamps[:n_steps]
-                    for cam_idx, accum in self.point_cloud_accumulators.items()}
-                })
             
             # 数据一致性校验
             assert len({len(v) for v in episode.values()}) == 1, "数据长度不一致!"
-            
-            # 监控点2：数据保存前 
-            mem_before_save = process.memory_info().rss
-            print(f"[Memory] before-saving: {mem_before_save / 1024**2:.2f} MB")
             
             # 同步保存（阻塞主线程）
             try:
@@ -958,10 +728,6 @@ class RealEnvFranka:
             episode_id = self.replay_buffer.n_episodes - 1                  # 获取当前集ID
             print(f'Episode {episode_id} 保存完毕!')                         # 保存完毕
 
-            # 监控点3：数据保存后 
-            mem_after_save = process.memory_info().rss
-            print(f"[Memory] Post-saving: {mem_after_save / 1024**2:.2f} MB")
-
             # 清理累加器
             self._is_recording = False                                      # 确保状态标志被清除
             self.obs_accumulator = None                                     # 清空观察累加器
@@ -970,24 +736,11 @@ class RealEnvFranka:
             # 强制释放图像累加器等
             for accum in self.image_accumulators.values():
                 accum.clear()
-            if self.enable_sam2:
-                for accum in self.image_mask_accumulators.values():
-                    accum.clear()
-            # 清空相机数据累加器
-            if self.enable_depth:
-                for accum in self.depth_accumulators.values():
-                    accum.clear()
-            # 新增点云清理
-            if self.enable_pointcloud:
-                for accum in self.point_cloud_accumulators.values():       
-                    accum.clear()
             # 退出保存状态
             self.is_saving = False      
             # 保存完毕
             print(f'Episode {self.replay_buffer.n_episodes} 清理完毕!')
-            # 监控点3：清理完成后
-            mem_final = process.memory_info().rss
-            print(f"[Memory] Final: {mem_final / 1024**2:.2f} MB")
+
 
     # 删除最近的记录集，包括删除视频文件和缓冲区中的数据
     def drop_episode(self):
@@ -998,5 +751,4 @@ class RealEnvFranka:
         if this_video_dir.exists():                                 # 如果视频目录存在
             shutil.rmtree(str(this_video_dir))                      # 删除视频目录
         print(f'Episode {episode_id} dropped!')                     # 打印删除消息
-
 

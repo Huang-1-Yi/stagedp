@@ -137,7 +137,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
             return_begin = False
             # init_position = np.array([0.566, -0.2,0.33,-1.44,-0.659,-0.593])
-            init_position = np.array([0.458, 0.033,0.562,2.88,-1.16,-0.104])
+            init_position = np.array([0.50, 0.033,0.562,2.88,-1.16,-0.104])# 0.458
             epsilon = 0.01                                      # 位置误差容忍阈值 (单位：米)0.004
             step_size = 0.015                                    # 调整步长0.01
             epsilon_rot = 0.02                                # 角度死区阈值 (约1度，单位：弧度)

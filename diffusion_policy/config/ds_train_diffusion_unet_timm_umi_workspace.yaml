@@ -64,8 +64,8 @@ policy:
     downsample_ratio: 32
 
     transforms:
-      - type: RandomCrop
-        ratio: 0.95
+      # - type: RandomCrop
+      #   ratio: 0.95
       # RandomRotation is not compatible with BF16
       # - _target_: torchvision.transforms.RandomRotation
       #   degrees:
@@ -134,23 +134,9 @@ val_dataloader:
   pin_memory: True
   persistent_workers: True
 
-# dataloader:
-#   batch_size: 64
-#   num_workers: 16
-#   shuffle: True
-#   pin_memory: True
-#   persistent_workers: True
-
-# val_dataloader:
-#   batch_size: 64
-#   num_workers: 16
-#   shuffle: False
-#   pin_memory: True
-#   persistent_workers: True
-
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 3.0e-4
+  lr: 1.0e-4  # 1.0e-4    # raw 3.0e-4
   betas: [0.95, 0.999]
   eps: 1.0e-8
   weight_decay: 1.0e-6
@@ -173,8 +159,10 @@ training:
   freeze_encoder: False
   # training loop control
   # in epochs
-  rollout_every: 10
-  checkpoint_every: 10
+  # rollout_every: 10
+  # checkpoint_every: 10
+  rollout_every: 50
+  checkpoint_every: 50
   val_every: 1
   sample_every: 5
   wild_sample_every: 5

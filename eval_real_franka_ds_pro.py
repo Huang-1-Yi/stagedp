@@ -231,7 +231,7 @@ def main(input,
 
             return_begin = False
             # init_position = np.array([0.566, -0.2,0.33,-1.44,-0.659,-0.593])
-            init_position = np.array([0.458, 0.033,0.562,2.88,-1.16,-0.104])
+            init_position = np.array([0.50, 0.033,0.562,2.88,-1.16,-0.104])# 0.458
             epsilon = 0.01                                      # 位置误差容忍阈值 (单位：米)0.004
             step_size = 0.015                                    # 调整步长0.01
             epsilon_rot = 0.02                                # 角度死区阈值 (约1度，单位：弧度)
@@ -264,7 +264,7 @@ def main(input,
             print(f"ActualGripperstate 形状: {state['ActualGripperstate'].shape}", 'Initial gripper state:', gripper_state)
 
 
-            obs = env.get_obs()
+            obs = env.get_obs_umi()
             print(f"\n观测数据键: {list(obs.keys())}")
             for key, value in obs.items():
                 print(f"{key}: {value.shape} ({value.dtype})")
@@ -360,7 +360,7 @@ def main(input,
                     t_sample = t_cycle_end - command_latency
                     t_command_target = t_cycle_end + dt
 
-                    obs = env.get_obs()                # visualize
+                    obs = env.get_obs_umi()                # visualize
                     
                     # 1：处理RGB图像数据（480x640x3）
                     # vis_img = obs[f'camera_{vis_camera_idx}'][-1,:,:,::-1].copy()   # 获取可视化图像并转换颜色空间
@@ -525,7 +525,7 @@ def main(input,
                         # calculate timing
                         t_cycle_end = t_start + (iter_idx + steps_per_inference) * dt
 
-                        obs = env.get_obs()
+                        obs = env.get_obs_umi()
                         # 以下为调试用
                         gripper_state = obs['robot_gripper'][-1]
                         obs_timestamps = obs['timestamp']
@@ -564,10 +564,10 @@ def main(input,
                             raw_action = result['action_pred'][0].detach().to('cpu').numpy()
                             raw_action2 = result['action'][0].detach().to('cpu').numpy()
 
-                            print(f"obs[robot0_eef_pos]: {obs['robot0_eef_pos']}")
-                            # print(f", obs_dict_np['robot0_eef_pose'].shape: {obs_dict_np['robot0_eef_pose'].shape}")
-                            print(f"raw_action.shape: {raw_action.shape}, raw_action2.shape: {raw_action2.shape}")
-                            print(f"raw_action: {raw_action}, raw_action2: {raw_action2}")
+                            # print(f"obs_dict_np['robot0_eef_pose'].shape: {obs_dict_np['robot0_eef_pose'].shape}")
+                            # print(f"obs[robot0_eef_pos]: {obs['robot0_eef_pos']}")
+                            # print(f"raw_action.shape: {raw_action.shape}, raw_action2.shape: {raw_action2.shape}")
+                            # print(f"raw_action: {raw_action}, raw_action2: {raw_action2}")
 
                             # raw_action = result['action'][0].detach().to('cpu').numpy()
                             # print('Inference latency:', time.time() - s)
@@ -599,6 +599,7 @@ def main(input,
                                 action[i, :3] = action[i, :3]  # 位置保持不变
                                 action[i, 3:6] = current_pose[3:6]  # 姿态保持当前值
                                 action[i, 6] = current_gripper  # 夹爪保持当前值
+                                # action[i, 6] = action[i, 6]  # 夹爪保持当前值
 
                             all_time_actions[[iter_idx], iter_idx:iter_idx + action_horizon] = action
 
