@@ -1,5 +1,51 @@
 """
 Script to extract observations from low-dimensional simulation states in a robosuite dataset.
+脚本用于从robosuite数据集中的低维模拟状态提取观察结果
+Args:
+    dataset (str): 输入hdf5数据集的路径 path to input hdf5 dataset 
+
+    output_name (str): 输出hdf5数据集的名称 name of output hdf5 dataset
+
+    n (int): 如果提供，处理完n个轨迹后停止 if provided, stop after n trajectories are processed
+
+    shaped (bool): 如果设置标志，则使用密集奖励 if flag is set, use dense rewards
+
+    camera_names (str or [str]): 用于图像观察的相机名称 camera name(s) to use for image observations. 
+        留空则不使用图像观察 Leave out to not use image observations.
+
+    camera_height (int): 图像观察的高度 height of image observation.
+
+    camera_width (int): 图像观察的宽度 width of image observation
+
+    done_mode (int): 如何写入完成信号。如果为0，当s'是成功状态时，done为1 how to write done signal. If 0, done is 1 whenever s' is a success state.
+        如果为1，每个轨迹结束时done为1。如果为2，两者都。 If 1, done is 1 at the end of each trajectory. If 2, both.
+
+    copy_rewards (bool): 如果提供，从源文件复制奖励而不是推理它们 if provided, copy rewards from source file instead of inferring them
+
+    copy_dones (bool): 如果提供，从源文件复制完成信号而不是推断它们 if provided, copy dones from source file instead of inferring them
+
+Example usage:
+    
+    # 提取低维观察结果 extract low-dimensional observations
+    python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name low_dim.hdf5 --done_mode 2
+    
+    # 提取84x84图像观察结果 extract 84x84 image observations
+    python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image.hdf5 \
+        --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84
+
+    # (节省空间选项) 提取84x84图像观察结果，并进行压缩，不提取下一个观察结果 (space saving option) extract 84x84 image observations with compression and without 
+    # （对于纯模仿学习算法不需要）extracting next obs (not needed for pure imitation learning algos)
+    python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image.hdf5 \
+        --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84 \
+        --compress --exclude-next-obs
+
+    # 使用密集奖励，并且只在轨迹结束时标记完成信号 use dense rewards, and only annotate the end of trajectories with done signal
+    python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image_dense_done_1.hdf5 \
+        --done_mode 1 --dense --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84
+"""
+
+"""
+Script to extract observations from low-dimensional simulation states in a robosuite dataset.
 
 Args:
     dataset (str): path to input hdf5 dataset

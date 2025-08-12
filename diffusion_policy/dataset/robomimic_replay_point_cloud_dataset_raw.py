@@ -1,3 +1,13 @@
+"""
+这段代码定义了一个自定义的数据集类 RobomimicReplayPointCloudDataset，它继承自 BaseImageDataset 类，目的是将数据从 HDF5 文件转换为 Zarr 格式，并提供数据的样本生成、归一化等功能。它主要用于处理包含点云数据和图像数据的训练数据集。
+数据处理与转换：RobomimicReplayPointCloudDataset 类负责从 HDF5 数据文件中加载原始数据，进行必要的转换（如旋转转换、数据标准化等），并将其存储为 Zarr 格式。它支持缓存机制，能够避免重复的计算。
+并行化处理：使用 ThreadPoolExecutor 和 multiprocessing 来并行化数据的加载和转换，确保高效处理大规模数据。
+数据集划分与采样：通过 SequenceSampler 和 get_val_mask 方法，数据集被划分为训练集和验证集，并支持按序列批量采样
+其中，数据存储和并行处理
+    使用 zarr 存储：数据被存储为 Zarr 格式，这是一种非常高效的多维数据存储格式，适用于大规模数据集。
+    并行处理：在 _convert_point_cloud_to_replay 中，使用 concurrent.futures.ThreadPoolExecutor 来并行处理图像和点云数据，最大化 I/O 性能，减少处理时间。
+"""
+
 from typing import Dict, List
 import torch
 import numpy as np
@@ -23,15 +33,15 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
 from diffusion_policy.common.normalize_util import (
     robomimic_abs_action_only_normalizer_from_stat,
-    robomimic_abs_action_only_dual_arm_normalizer_from_stat,
     get_range_normalizer_from_stat,
+    get_voxel_identity_normalizer,
     get_image_range_normalizer,
     get_identity_normalizer_from_stat,
     array_to_stats
 )
 register_codecs()
 
-class RobomimicReplayImageDataset(BaseImageDataset):
+class RobomimicReplayPointCloudDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
             dataset_path: str,
@@ -45,8 +55,23 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             use_cache=False,
             seed=42,
             val_ratio=0.0,
-            n_demo=100
+            n_demo=100,
         ):
+        """
+        初始化数据集类的一些关键参数：
+            参数：
+                shape_meta：形状元数据，用来描述数据的维度和类型。
+                dataset_path：数据集的路径。
+                horizon, pad_before, pad_after：数据的处理范围和前后填充。
+                n_obs_steps：观察步数，控制从数据中选择多少步的观察。
+                abs_action：是否使用绝对动作（例如，位置和旋转数据被合并为单一动作）。
+                use_cache：是否使用缓存，以避免每次都重新处理数据。
+                seed, val_ratio, n_demo：用于控制随机性、验证集比例以及使用的演示数量。
+            关键逻辑：
+                缓存机制：如果 use_cache=True，则使用 zarr 格式的缓存。程序首先检查缓存是否存在，如果不存在，程序将处理数据并保存到缓存中，若缓存已存在，直接从缓存加载数据。
+                数据转换：通过 _convert_point_cloud_to_replay 函数，将点云数据和其他数据转换为 ReplayBuffer 格式，并将其存储在 replay_buffer 中。
+                分配数据类型：根据 shape_meta 中的元数据，将数据分为三类：rgb_keys（RGB图像数据），pc_keys（点云数据）和 lowdim_keys（低维数据）。
+        """
         self.n_demo = n_demo
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
@@ -62,7 +87,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                     try:
                         print('Cache does not exist. Creating!')
                         # store = zarr.DirectoryStore(cache_zarr_path)
-                        replay_buffer = _convert_robomimic_to_replay(
+                        replay_buffer = _convert_point_cloud_to_replay(
                             store=zarr.MemoryStore(), 
                             shape_meta=shape_meta, 
                             dataset_path=dataset_path, 
@@ -84,7 +109,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                             src_store=zip_store, store=zarr.MemoryStore())
                     print('Loaded!')
         else:
-            replay_buffer = _convert_robomimic_to_replay(
+            replay_buffer = _convert_point_cloud_to_replay(
                 store=zarr.MemoryStore(), 
                 shape_meta=shape_meta, 
                 dataset_path=dataset_path, 
@@ -93,12 +118,15 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                 n_demo=n_demo)
 
         rgb_keys = list()
+        pc_keys = list()
         lowdim_keys = list()
         obs_shape_meta = shape_meta['obs']
         for key, attr in obs_shape_meta.items():
             type = attr.get('type', 'low_dim')
             if type == 'rgb':
                 rgb_keys.append(key)
+            if type == 'point_cloud':
+                pc_keys.append(key)
             elif type == 'low_dim':
                 lowdim_keys.append(key)
         
@@ -108,7 +136,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         key_first_k = dict()
         if n_obs_steps is not None:
             # only take first k obs from images
-            for key in rgb_keys + lowdim_keys:
+            for key in rgb_keys + pc_keys + lowdim_keys:
                 key_first_k[key] = n_obs_steps
 
         val_mask = get_val_mask(
@@ -128,6 +156,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         self.sampler = sampler
         self.shape_meta = shape_meta
         self.rgb_keys = rgb_keys
+        self.pc_keys = pc_keys
         self.lowdim_keys = lowdim_keys
         self.abs_action = abs_action
         self.n_obs_steps = n_obs_steps
@@ -138,6 +167,9 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         self.use_legacy_normalizer = use_legacy_normalizer
 
     def get_validation_dataset(self):
+        """
+        返回一个新的数据集实例，用于验证集，区别在于它的 sampler 会使用验证集的掩码 train_mask 的反值（即 ~self.train_mask），确保使用不同的数据进行验证。
+        """
         val_set = copy.copy(self)
         val_set.sampler = SequenceSampler(
             replay_buffer=self.replay_buffer, 
@@ -149,52 +181,41 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         val_set.train_mask = ~self.train_mask
         return val_set
 
-    def get_normalizer(self, **kwargs) -> LinearNormalizer:
+    def get_normalizer(self, mode='limits', **kwargs) -> LinearNormalizer:
+        """
+        该方法根据存储的数据计算并返回一个 LinearNormalizer 对象，该对象用于对数据进行标准化。主要步骤：
+            从 replay_buffer 中提取所需数据：动作（action）、机器人末端执行器位置（robot0_eef_pos）、机器人末端执行器四元数（robot0_eef_quat）等。
+            使用 LinearNormalizer 对这些数据进行标准化。
+            SingleFieldLinearNormalizer.create_identity() 被注释掉了，说明原本可能考虑对点云数据不做归一化（即保持原数据），但这一行被注释掉了，表明可能会在某些情况下使用自定义的标准化方法。
+        """
+        data = {
+            'action': self.replay_buffer['action'],
+            'robot0_eef_pos': self.replay_buffer['robot0_eef_pos'][...,:],
+            'robot0_eef_quat': self.replay_buffer['robot0_eef_quat'][...,:],
+            'robot0_gripper_qpos': self.replay_buffer['robot0_gripper_qpos'][...,:],
+            'point_cloud': self.replay_buffer['point_cloud'],
+        }
         normalizer = LinearNormalizer()
-
-        # action
-        stat = array_to_stats(self.replay_buffer['action'])
-        if self.abs_action:
-            if stat['mean'].shape[-1] > 10:
-                # dual arm
-                this_normalizer = robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat)
-            else:
-                this_normalizer = robomimic_abs_action_only_normalizer_from_stat(stat)
-            
-            if self.use_legacy_normalizer:
-                this_normalizer = normalizer_from_stat(stat)
-        else:
-            # already normalized
-            this_normalizer = get_identity_normalizer_from_stat(stat)
-        normalizer['action'] = this_normalizer
-
-        # obs
-        for key in self.lowdim_keys:
-            stat = array_to_stats(self.replay_buffer[key])
-
-            if key.endswith('pos'):
-                this_normalizer = get_range_normalizer_from_stat(stat)
-            elif key.endswith('quat'):
-                # quaternion is in [-1,1] already
-                this_normalizer = get_identity_normalizer_from_stat(stat)
-            elif key.endswith('qpos'):
-                this_normalizer = get_range_normalizer_from_stat(stat)
-            else:
-                raise RuntimeError('unsupported')
-            normalizer[key] = this_normalizer
-
-        # image
-        for key in self.rgb_keys:
-            normalizer[key] = get_image_range_normalizer()
+        normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
+        # normalizer['point_cloud'] = SingleFieldLinearNormalizer.create_identity()
         return normalizer
 
     def get_all_actions(self) -> torch.Tensor:
+        """
+        从 replay_buffer 中提取所有的动作数据，并返回一个 torch.Tensor 类型的对象
+        """
         return torch.from_numpy(self.replay_buffer['action'])
 
     def __len__(self):
+        """
+        __len__：返回数据集的长度，等于 self.sampler 的长度，self.sampler 是用于从 replay_buffer 中抽取样本的工具。
+        """
         return len(self.sampler)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """
+        获取一个样本，索引 idx 对应的样本数据，包括图像、点云和低维数据。每个数据样本被转换为 torch.Tensor 类型，并返回一个字典形式的数据。
+        """
         threadpool_limits(1)
         data = self.sampler.sample_sequence(idx)
 
@@ -213,6 +234,9 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                 ).astype(np.float32) / 255.
             # T,C,H,W
             del data[key]
+        for key in self.pc_keys:
+            obs_dict[key] = data[key][T_slice].astype(np.float32)
+            del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             del data[key]
@@ -225,6 +249,9 @@ class RobomimicReplayImageDataset(BaseImageDataset):
 
 
 def _convert_actions(raw_actions, abs_action, rotation_transformer):
+    """
+    转换原始的动作数据，特别是当使用绝对动作时，分离位置、旋转和抓取信息，并根据所选的旋转表示法（如 rotation_6d）进行旋转转换。
+    """
     actions = raw_actions
     if abs_action:
         is_dual_arm = False
@@ -247,14 +274,18 @@ def _convert_actions(raw_actions, abs_action, rotation_transformer):
     return actions
 
 
-def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
+def _convert_point_cloud_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
         n_workers=None, max_inflight_tasks=None, n_demo=100):
+    """
+    将原始的点云和动作数据转换为 ReplayBuffer 格式，并存储在 Zarr 文件中。此过程涉及读取 HDF5 文件，提取图像、点云和动作数据，并将它们压缩存储。使用 ThreadPoolExecutor 并行处理图像和点云数据，以提高性能
+    """
     if n_workers is None:
         n_workers = multiprocessing.cpu_count()
     if max_inflight_tasks is None:
         max_inflight_tasks = n_workers * 5
 
     # parse shape_meta
+    pc_keys = list()
     rgb_keys = list()
     lowdim_keys = list()
     # construct compressors and chunks
@@ -264,6 +295,8 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
         type = attr.get('type', 'low_dim')
         if type == 'rgb':
             rgb_keys.append(key)
+        elif type == 'point_cloud':
+            pc_keys.append(key)
         elif type == 'low_dim':
             lowdim_keys.append(key)
     
@@ -276,6 +309,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
         demos = file['data']
         episode_ends = list()
         prev_end = 0
+        n_demo = min(n_demo, len(demos))
         for i in range(n_demo):
             demo = demos[f'demo_{i}']
             episode_length = demo['actions'].shape[0]
@@ -303,6 +337,8 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                     abs_action=abs_action,
                     rotation_transformer=rotation_transformer
                 )
+                print(f"this_data.shape: {this_data.shape}")
+                print(f"Expected shape: {(n_steps,)} + {tuple(shape_meta['action']['shape'])}")
                 assert this_data.shape == (n_steps,) + tuple(shape_meta['action']['shape'])
             else:
                 assert this_data.shape == (n_steps,) + tuple(shape_meta['obs'][key]['shape'])
@@ -315,6 +351,14 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                 dtype=this_data.dtype
             )
         
+        def pc_copy(zarr_arr, zarr_idx, hdf5_arr, hdf5_idx):
+            try:
+                zarr_arr[zarr_idx] = hdf5_arr[hdf5_idx]
+                _ = zarr_arr[zarr_idx]
+                return True
+            except Exception as e:
+                return False
+        
         def img_copy(zarr_arr, zarr_idx, hdf5_arr, hdf5_idx):
             try:
                 zarr_arr[zarr_idx] = hdf5_arr[hdf5_idx]
@@ -323,7 +367,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                 return True
             except Exception as e:
                 return False
-        
+            
         with tqdm(total=n_steps*len(rgb_keys), desc="Loading image data", mininterval=1.0) as pbar:
             # one chunk per thread, therefore no synchronization needed
             with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
@@ -362,11 +406,51 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                     if not f.result():
                         raise RuntimeError('Failed to encode image!')
                 pbar.update(len(completed))
+        
+        with tqdm(total=n_steps*len(pc_keys), desc="Loading point cloud data", mininterval=1.0) as pbar:
+            # one chunk per thread, therefore no synchronization needed
+            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+                futures = set()
+                for key in pc_keys:
+                    data_key = key
+                    shape = tuple(shape_meta['obs'][key]['shape'])
+                    n, c = shape
+                    img_arr = data_group.require_dataset(
+                        name=key,
+                        shape=(n_steps, n, c),
+                        chunks=(1, n, c),
+                        dtype=np.float32
+                    )
+                    for episode_idx in range(n_demo):
+                        demo = demos[f'demo_{episode_idx}']
+                        hdf5_arr = demo['obs'][key]
+                        for hdf5_idx in range(hdf5_arr.shape[0]):
+                            if len(futures) >= max_inflight_tasks:
+                                # limit number of inflight tasks
+                                completed, futures = concurrent.futures.wait(futures, 
+                                    return_when=concurrent.futures.FIRST_COMPLETED)
+                                for f in completed:
+                                    if not f.result():
+                                        raise RuntimeError('Failed to encode image!')
+                                pbar.update(len(completed))
+
+                            zarr_idx = episode_starts[episode_idx] + hdf5_idx
+                            futures.add(
+                                executor.submit(pc_copy, 
+                                    img_arr, zarr_idx, hdf5_arr, hdf5_idx))
+                completed, futures = concurrent.futures.wait(futures)
+                for f in completed:
+                    if not f.result():
+                        raise RuntimeError('Failed to encode image!')
+                pbar.update(len(completed))
 
     replay_buffer = ReplayBuffer(root)
     return replay_buffer
 
 def normalizer_from_stat(stat):
+    """
+    根据统计数据（如最大值和最小值）创建一个标准化器，用于规范化数据，使其具有指定的范围
+    """
     max_abs = np.maximum(stat['max'].max(), np.abs(stat['min']).max())
     scale = np.full_like(stat['max'], fill_value=1/max_abs)
     offset = np.zeros_like(stat['max'])
@@ -375,3 +459,4 @@ def normalizer_from_stat(stat):
         offset=offset,
         input_stats_dict=stat
     )
+

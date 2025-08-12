@@ -1,27 +1,37 @@
-from typing import Dict
+from typing import Dict, Tuple
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, reduce
+from einops import reduce
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
-from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.model.vision.multi_image_obs_encoder import MultiImageObsEncoder
-from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.model.common.rotation_transformer import RotationTransformer
+try:
+    import robomimic.models.base_nets as rmbn
+    if not hasattr(rmbn, 'CropRandomizer'):
+        raise ImportError("CropRandomizer is not in robomimic.models.base_nets")
+except ImportError:
+    import robomimic.models.obs_core as rmbn
+from diffusion_policy.model.equi.equi_obs_encoder import EquivariantObsEnc
+from diffusion_policy.model.equi.equi_conditional_unet1d_vel import EquiDiffusionUNetVel
 
-class DiffusionUnetImagePolicy(BaseImagePolicy):
+
+class DiffusionEquiUNetCNNEncRelPolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
             noise_scheduler: DDPMScheduler,
-            obs_encoder: MultiImageObsEncoder,
+            # task params
             horizon, 
             n_action_steps, 
             n_obs_steps,
             num_inference_steps=None,
-            obs_as_global_cond=True,
+            # image
+            crop_shape=(76, 76),
+            # arch
+            N=8,
+            enc_n_hidden=64,
             diffusion_step_embed_dim=256,
             down_dims=(256,512,1024),
             kernel_size=5,
@@ -31,53 +41,77 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             **kwargs):
         super().__init__()
 
-        # parse shapes
+        # parse shape_meta
         action_shape = shape_meta['action']['shape']
         assert len(action_shape) == 1
-        action_dim = action_shape[0]
-        # get feature dim
-        obs_feature_dim = obs_encoder.output_shape()[0]
-
-        # create diffusion model
-        input_dim = action_dim + obs_feature_dim
-        global_cond_dim = None
-        if obs_as_global_cond:
-            input_dim = action_dim
-            global_cond_dim = obs_feature_dim * n_obs_steps
-
-        model = ConditionalUnet1D(
-            input_dim=input_dim,
+        action_dim = 13 # 3 + 9 + 1
+        obs_shape_meta = shape_meta['obs']
+        
+        self.enc = EquivariantObsEnc(
+            obs_shape=obs_shape_meta['agentview_image']['shape'], 
+            crop_shape=crop_shape, 
+            n_hidden=enc_n_hidden, 
+            N=N)
+        
+        obs_feature_dim = enc_n_hidden
+        global_cond_dim = obs_feature_dim * n_obs_steps
+        
+        self.diff = EquiDiffusionUNetVel(
+            act_emb_dim=64,
             local_cond_dim=None,
             global_cond_dim=global_cond_dim,
             diffusion_step_embed_dim=diffusion_step_embed_dim,
             down_dims=down_dims,
             kernel_size=kernel_size,
             n_groups=n_groups,
-            cond_predict_scale=cond_predict_scale
+            cond_predict_scale=cond_predict_scale,
+            N=N,
         )
+        
 
-        self.obs_encoder = obs_encoder
-        self.model = model
-        self.noise_scheduler = noise_scheduler
+        print("Enc params: %e" % sum(p.numel() for p in self.enc.parameters()))
+        print("Diff params: %e" % sum(p.numel() for p in self.diff.parameters()))
+
         self.mask_generator = LowdimMaskGenerator(
             action_dim=action_dim,
-            obs_dim=0 if obs_as_global_cond else obs_feature_dim,
+            obs_dim=0,
             max_n_obs_steps=n_obs_steps,
             fix_obs_steps=True,
             action_visible=False
         )
         self.normalizer = LinearNormalizer()
+
         self.horizon = horizon
-        self.obs_feature_dim = obs_feature_dim
         self.action_dim = action_dim
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
-        self.obs_as_global_cond = obs_as_global_cond
+        self.crop_shape = crop_shape
+        self.obs_feature_dim = obs_feature_dim
+
         self.kwargs = kwargs
 
+        self.noise_scheduler = noise_scheduler
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
+
+        self.axisangle_to_matrix = RotationTransformer('axis_angle', 'matrix')
+
+    # ========= training  ============
+    def set_normalizer(self, normalizer: LinearNormalizer):
+        self.normalizer.load_state_dict(normalizer.state_dict())
+
+    def get_optimizer(
+            self, 
+            weight_decay: float, 
+            learning_rate: float, 
+            betas: Tuple[float, float],
+            eps: float
+        ) -> torch.optim.Optimizer:
+        optimizer = torch.optim.AdamW(
+            self.parameters(), weight_decay=weight_decay, lr=learning_rate, betas=betas, eps=eps
+        )
+        return optimizer
     
     # ========= inference  ============
     def conditional_sample(self, 
@@ -87,7 +121,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             # keyword arguments to scheduler.step
             **kwargs
             ):
-        model = self.model
+        model = self.diff
         scheduler = self.noise_scheduler
 
         trajectory = torch.randn(
@@ -142,25 +176,14 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
-        if self.obs_as_global_cond:
-            # condition through global feature
-            this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, Do
-            global_cond = nobs_features.reshape(B, -1)
-            # empty data for action
-            cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
-            cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
-        else:
-            # condition through impainting
-            this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, T, Do
-            nobs_features = nobs_features.reshape(B, To, -1)
-            cond_data = torch.zeros(size=(B, T, Da+Do), device=device, dtype=dtype)
-            cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
-            cond_data[:,:To,Da:] = nobs_features
-            cond_mask[:,:To,Da:] = True
+        # condition through global feature
+        # this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
+        nobs_features = self.enc(nobs)
+        # reshape back to B, Do
+        global_cond = nobs_features.reshape(B, -1)
+        # empty data for action
+        cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
+        cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
 
         # run sampling
         nsample = self.conditional_sample(
@@ -170,6 +193,9 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             global_cond=global_cond,
             **self.kwargs)
         
+        axisangle = self.axisangle_to_matrix.inverse(nsample[:, :, 3:12].reshape(B, T, 3, 3))
+        nsample = torch.cat([nsample[:, :, :3], axisangle, nsample[:, :, -1:]], dim=-1)
+
         # unnormalize prediction
         naction_pred = nsample[...,:Da]
         action_pred = self.normalizer['action'].unnormalize(naction_pred)
@@ -194,29 +220,24 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
-        batch_size = nactions.shape[0]
-        horizon = nactions.shape[1]
+        B = nactions.shape[0]
+        T = nactions.shape[1]
+
+        axisangle = nactions[:, :, 3:6]
+        matrix = self.axisangle_to_matrix.forward(axisangle).reshape(B, T, 9)
+        nactions = torch.cat([nactions[:, :, :3], matrix, nactions[:, :, -1:]], dim=-1)
 
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
         trajectory = nactions
         cond_data = trajectory
-        if self.obs_as_global_cond:
-            # reshape B, T, ... to B*T
-            this_nobs = dict_apply(nobs, 
-                lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, Do
-            global_cond = nobs_features.reshape(batch_size, -1)
-        else:
-            # reshape B, T, ... to B*T
-            this_nobs = dict_apply(nobs, lambda x: x.reshape(-1, *x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
-            # reshape back to B, T, Do
-            nobs_features = nobs_features.reshape(batch_size, horizon, -1)
-            cond_data = torch.cat([nactions, nobs_features], dim=-1)
-            trajectory = cond_data.detach()
+        # reshape B, T, ... to B*T
+        # this_nobs = dict_apply(nobs, 
+        #     lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
+        nobs_features = self.enc(nobs)
+        # reshape back to B, Do
+        global_cond = nobs_features.reshape(B, -1)
 
         # generate impainting mask
         condition_mask = self.mask_generator(trajectory.shape)
@@ -241,7 +262,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         noisy_trajectory[condition_mask] = cond_data[condition_mask]
         
         # Predict the noise residual
-        pred = self.model(noisy_trajectory, timesteps, 
+        pred = self.diff(noisy_trajectory, timesteps, 
             local_cond=local_cond, global_cond=global_cond)
 
         pred_type = self.noise_scheduler.config.prediction_type 

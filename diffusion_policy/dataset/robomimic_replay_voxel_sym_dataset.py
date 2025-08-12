@@ -23,15 +23,15 @@ from diffusion_policy.common.replay_buffer import ReplayBuffer
 from diffusion_policy.common.sampler import SequenceSampler, get_val_mask
 from diffusion_policy.common.normalize_util import (
     robomimic_abs_action_only_normalizer_from_stat,
-    robomimic_abs_action_only_dual_arm_normalizer_from_stat,
     get_range_normalizer_from_stat,
+    get_voxel_identity_normalizer,
     get_image_range_normalizer,
     get_identity_normalizer_from_stat,
     array_to_stats
 )
 register_codecs()
 
-class RobomimicReplayImageDataset(BaseImageDataset):
+class RobomimicReplayVoxelSymDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
             dataset_path: str,
@@ -45,9 +45,14 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             use_cache=False,
             seed=42,
             val_ratio=0.0,
-            n_demo=100
+            n_demo=100,
+            ws_size=0.6,
+            ws_x_center=0,
+            ws_y_center=0,
         ):
         self.n_demo = n_demo
+        self.ws_size = ws_size
+        self.ws_center = np.array([ws_x_center, ws_y_center])
         rotation_transformer = RotationTransformer(
             from_rep='axis_angle', to_rep=rotation_rep)
 
@@ -62,7 +67,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                     try:
                         print('Cache does not exist. Creating!')
                         # store = zarr.DirectoryStore(cache_zarr_path)
-                        replay_buffer = _convert_robomimic_to_replay(
+                        replay_buffer = _convert_voxel_to_replay(
                             store=zarr.MemoryStore(), 
                             shape_meta=shape_meta, 
                             dataset_path=dataset_path, 
@@ -84,7 +89,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                             src_store=zip_store, store=zarr.MemoryStore())
                     print('Loaded!')
         else:
-            replay_buffer = _convert_robomimic_to_replay(
+            replay_buffer = _convert_voxel_to_replay(
                 store=zarr.MemoryStore(), 
                 shape_meta=shape_meta, 
                 dataset_path=dataset_path, 
@@ -93,12 +98,15 @@ class RobomimicReplayImageDataset(BaseImageDataset):
                 n_demo=n_demo)
 
         rgb_keys = list()
+        voxel_keys = list()
         lowdim_keys = list()
         obs_shape_meta = shape_meta['obs']
         for key, attr in obs_shape_meta.items():
             type = attr.get('type', 'low_dim')
             if type == 'rgb':
                 rgb_keys.append(key)
+            if type == 'voxel':
+                voxel_keys.append(key)
             elif type == 'low_dim':
                 lowdim_keys.append(key)
         
@@ -108,7 +116,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         key_first_k = dict()
         if n_obs_steps is not None:
             # only take first k obs from images
-            for key in rgb_keys + lowdim_keys:
+            for key in rgb_keys + voxel_keys + lowdim_keys:
                 key_first_k[key] = n_obs_steps
 
         val_mask = get_val_mask(
@@ -128,6 +136,7 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         self.sampler = sampler
         self.shape_meta = shape_meta
         self.rgb_keys = rgb_keys
+        self.voxel_keys = voxel_keys
         self.lowdim_keys = lowdim_keys
         self.abs_action = abs_action
         self.n_obs_steps = n_obs_steps
@@ -151,14 +160,17 @@ class RobomimicReplayImageDataset(BaseImageDataset):
 
     def get_normalizer(self, **kwargs) -> LinearNormalizer:
         normalizer = LinearNormalizer()
-
         # action
         stat = array_to_stats(self.replay_buffer['action'])
         if self.abs_action:
             if stat['mean'].shape[-1] > 10:
                 # dual arm
-                this_normalizer = robomimic_abs_action_only_dual_arm_normalizer_from_stat(stat)
+                raise NotImplementedError
             else:
+                magnitute = max(np.max([stat['max'][:2] - self.ws_center, self.ws_center - stat['min'][:2]]), self.ws_size/2)
+                stat['min'][:2] = self.ws_center - magnitute
+                stat['max'][:2] = self.ws_center + magnitute
+                stat['mean'][:2] = self.ws_center
                 this_normalizer = robomimic_abs_action_only_normalizer_from_stat(stat)
             
             if self.use_legacy_normalizer:
@@ -172,13 +184,17 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         for key in self.lowdim_keys:
             stat = array_to_stats(self.replay_buffer[key])
 
-            if key.endswith('pos'):
+            if key.endswith('qpos'):
+                this_normalizer = get_range_normalizer_from_stat(stat)
+            elif key.endswith('pos'):
+                magnitute = max(np.max([stat['max'][:2] - self.ws_center, self.ws_center - stat['min'][:2]]), self.ws_size/2)
+                stat['min'][:2] = self.ws_center - magnitute
+                stat['max'][:2] = self.ws_center + magnitute
+                stat['mean'][:2] = self.ws_center
                 this_normalizer = get_range_normalizer_from_stat(stat)
             elif key.endswith('quat'):
                 # quaternion is in [-1,1] already
                 this_normalizer = get_identity_normalizer_from_stat(stat)
-            elif key.endswith('qpos'):
-                this_normalizer = get_range_normalizer_from_stat(stat)
             else:
                 raise RuntimeError('unsupported')
             normalizer[key] = this_normalizer
@@ -186,6 +202,9 @@ class RobomimicReplayImageDataset(BaseImageDataset):
         # image
         for key in self.rgb_keys:
             normalizer[key] = get_image_range_normalizer()
+        for key in self.voxel_keys:
+            normalizer[key] = get_voxel_identity_normalizer()
+
         return normalizer
 
     def get_all_actions(self) -> torch.Tensor:
@@ -212,6 +231,15 @@ class RobomimicReplayImageDataset(BaseImageDataset):
             obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
                 ).astype(np.float32) / 255.
             # T,C,H,W
+            del data[key]
+        for key in self.voxel_keys:
+            obs_dict[key] = data[key][T_slice].astype(np.float32)
+            obs_dict[key][:, 1:] /= 255.
+            # # convert uint8 image to float32
+            # voxels = np.moveaxis(data[key][T_slice].astype(np.float32), [0, 1, 2, 3, 4], [0, 1, 4, 3, 2])
+            # voxels = np.flip(voxels, (2, 3))
+            # voxels[:, 1:] /= 255.
+            # obs_dict[key] = voxels.copy()
             del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
@@ -247,14 +275,15 @@ def _convert_actions(raw_actions, abs_action, rotation_transformer):
     return actions
 
 
-def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
+def _convert_voxel_to_replay(store, shape_meta, dataset_path, abs_action, rotation_transformer, 
         n_workers=None, max_inflight_tasks=None, n_demo=100):
     if n_workers is None:
-        n_workers = multiprocessing.cpu_count()
+        n_workers = 24
     if max_inflight_tasks is None:
         max_inflight_tasks = n_workers * 5
 
     # parse shape_meta
+    voxel_keys = list()
     rgb_keys = list()
     lowdim_keys = list()
     # construct compressors and chunks
@@ -264,6 +293,8 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
         type = attr.get('type', 'low_dim')
         if type == 'rgb':
             rgb_keys.append(key)
+        elif type == 'voxel':
+            voxel_keys.append(key)
         elif type == 'low_dim':
             lowdim_keys.append(key)
     
@@ -276,6 +307,7 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
         demos = file['data']
         episode_ends = list()
         prev_end = 0
+        n_demo = min(n_demo, len(demos))
         for i in range(n_demo):
             demo = demos[f'demo_{i}']
             episode_length = demo['actions'].shape[0]
@@ -314,17 +346,17 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                 compressor=None,
                 dtype=this_data.dtype
             )
-        
-        def img_copy(zarr_arr, zarr_idx, hdf5_arr, hdf5_idx):
+
+        def copy_to_zarr(zarr_arr, hdf5_arr, start_idx, end_idx):
             try:
-                zarr_arr[zarr_idx] = hdf5_arr[hdf5_idx]
+                zarr_arr[start_idx:end_idx] = hdf5_arr
                 # make sure we can successfully decode
-                _ = zarr_arr[zarr_idx]
+                _ = zarr_arr[start_idx:end_idx]
                 return True
             except Exception as e:
                 return False
-        
-        with tqdm(total=n_steps*len(rgb_keys), desc="Loading image data", mininterval=1.0) as pbar:
+            
+        with tqdm(total=n_demo*len(rgb_keys), desc="Loading image data", mininterval=1.0) as pbar:
             # one chunk per thread, therefore no synchronization needed
             with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
                 futures = set()
@@ -342,21 +374,64 @@ def _convert_robomimic_to_replay(store, shape_meta, dataset_path, abs_action, ro
                     )
                     for episode_idx in range(n_demo):
                         demo = demos[f'demo_{episode_idx}']
-                        hdf5_arr = demo['obs'][key]
-                        for hdf5_idx in range(hdf5_arr.shape[0]):
-                            if len(futures) >= max_inflight_tasks:
-                                # limit number of inflight tasks
-                                completed, futures = concurrent.futures.wait(futures, 
-                                    return_when=concurrent.futures.FIRST_COMPLETED)
-                                for f in completed:
-                                    if not f.result():
-                                        raise RuntimeError('Failed to encode image!')
-                                pbar.update(len(completed))
+                        hdf5_arr = demo['obs'][key][:]
+                        start_idx = episode_starts[episode_idx]
+                        if episode_idx < n_demo - 1:
+                            end_idx = episode_starts[episode_idx+1]
+                        else:
+                            end_idx = n_steps
+                        if len(futures) >= max_inflight_tasks:
+                            # limit number of inflight tasks
+                            completed, futures = concurrent.futures.wait(futures, 
+                                return_when=concurrent.futures.FIRST_COMPLETED)
+                            for f in completed:
+                                if not f.result():
+                                    raise RuntimeError('Failed to encode image!')
+                            pbar.update(len(completed))
 
-                            zarr_idx = episode_starts[episode_idx] + hdf5_idx
-                            futures.add(
-                                executor.submit(img_copy, 
-                                    img_arr, zarr_idx, hdf5_arr, hdf5_idx))
+                        futures.add(
+                            executor.submit(copy_to_zarr, 
+                                img_arr, hdf5_arr, start_idx, end_idx))
+                completed, futures = concurrent.futures.wait(futures)
+                for f in completed:
+                    if not f.result():
+                        raise RuntimeError('Failed to encode image!')
+                pbar.update(len(completed))
+        
+        with tqdm(total=n_demo*len(voxel_keys), desc="Loading voxel data", mininterval=1.0) as pbar:
+            # one chunk per thread, therefore no synchronization needed
+            with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+                futures = set()
+                for key in voxel_keys:
+                    data_key = key
+                    shape = tuple(shape_meta['obs'][key]['shape'])
+                    c,h,w,l = shape
+                    img_arr = data_group.require_dataset(
+                        name=key,
+                        shape=(n_steps,c,h,w,l),
+                        chunks=(1,c,h,w,l),
+                        dtype=np.uint8
+                    )
+                    for episode_idx in range(n_demo):
+                        demo = demos[f'demo_{episode_idx}']
+                        hdf5_arr = demo['obs'][key][:]
+                        start_idx = episode_starts[episode_idx]
+                        if episode_idx < n_demo - 1:
+                            end_idx = episode_starts[episode_idx+1]
+                        else:
+                            end_idx = n_steps
+                        if len(futures) >= max_inflight_tasks:
+                            # limit number of inflight tasks
+                            completed, futures = concurrent.futures.wait(futures, 
+                                return_when=concurrent.futures.FIRST_COMPLETED)
+                            for f in completed:
+                                if not f.result():
+                                    raise RuntimeError('Failed to encode image!')
+                            pbar.update(len(completed))
+
+                        futures.add(
+                            executor.submit(copy_to_zarr, 
+                                img_arr, hdf5_arr, start_idx, end_idx))
                 completed, futures = concurrent.futures.wait(futures)
                 for f in completed:
                     if not f.result():

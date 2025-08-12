@@ -5,6 +5,7 @@ import h5py
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.env_utils as EnvUtils
+import robomimic.utils.tensor_utils as TensorUtils  # eqdp用
 from scipy.spatial.transform import Rotation
 
 from robomimic.config import config_factory
@@ -175,3 +176,68 @@ class RobomimicAbsoluteActionConverter:
             'rot': max_next_eef_rot_dist
         }
         return info
+
+# eqdp用
+class RobomimicObsConverter:
+    def __init__(self, dataset_path, algo_name='bc'):
+        # default BC config
+        # config = config_factory(algo_name=algo_name)
+
+        # read config to set up metadata for observation modalities (e.g. detecting rgb observations)
+        # must ran before create dataset
+        # ObsUtils.initialize_obs_utils_with_config(config)
+
+        env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path)
+        # env_meta['env_kwargs']['camera_names'] = ['birdview', 'agentview', 'sideview', 'robot0_eye_in_hand']
+
+        env = EnvUtils.create_env_for_data_processing(
+            env_meta=env_meta,
+            # camera_names=['frontview', 'birdview', 'agentview', 'sideview', 'agentview_full', 'robot0_robotview', 'robot0_eye_in_hand'], 
+            camera_names=['birdview', 'agentview', 'sideview', 'robot0_eye_in_hand'], 
+            camera_height=84, 
+            camera_width=84, 
+            reward_shaping=False,
+        )
+        # env = EnvUtils.create_env_from_metadata(
+        #     env_meta=env_meta,
+        #     render=True, 
+        #     render_offscreen=True,
+        #     use_image_obs=True,
+        # )
+
+        self.env = env
+        self.file = h5py.File(dataset_path, 'r')
+    
+    def __len__(self):
+        return len(self.file['data'])
+
+    def convert_obs(self, initial_state, states):
+        obss = []
+        self.env.reset()
+        obs = self.env.reset_to(initial_state)
+        obss.append(obs)
+        for i in range(1, len(states)):
+            obs = self.env.reset_to({'states': states[i]})
+            obss.append(obs)
+        return TensorUtils.list_of_flat_dict_to_dict_of_list(obss)
+
+    def convert_idx(self, idx):
+        file = self.file
+        demo = file[f'data/demo_{idx}']
+        # input
+
+        states = demo['states'][:]
+        initial_state = dict(states=states[0])
+        initial_state["model"] = demo.attrs["model_file"]
+
+        # generate abs actions
+        obss = self.convert_obs(initial_state, states)
+        del obss['birdview_image']
+        del obss['birdview_depth']
+        del obss['agentview_depth']
+        del obss['sideview_image']
+        del obss['sideview_depth']
+        del obss['robot0_eye_in_hand_depth']
+        return obss
+
+

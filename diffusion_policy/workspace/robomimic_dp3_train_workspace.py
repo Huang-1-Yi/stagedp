@@ -32,7 +32,7 @@ import shutil
 import time
 import threading
 from hydra.core.hydra_config import HydraConfig
-from diffusion_policy.policy.dp3 import DP3
+from diffusion_policy.policy.robomimic_dp3 import DP3
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -528,7 +528,7 @@ class TrainDP3Workspace:
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.joinpath(
-        'equi_diffpo', 'config'))
+        'diffusion_policy', 'config'))
 )
 def main(cfg):
     workspace = TrainDP3Workspace(cfg)

@@ -23,9 +23,19 @@ import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.obs_utils as ObsUtils
 
+# 添加调试日志
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("RobomimicImageRunner")
 
-
+import signal
+class TimeoutException(Exception): 
+    pass
+def handler(signum, frame):
+    raise TimeoutException("环境重置超时")
+    
 def create_env(env_meta, shape_meta, enable_render=True):
+    logger.info("创建环境中...")
     modality_mapping = collections.defaultdict(list)
     for key, attr in shape_meta['obs'].items():
         modality_mapping[attr.get('type', 'low_dim')].append(key)
@@ -37,6 +47,7 @@ def create_env(env_meta, shape_meta, enable_render=True):
         render_offscreen=enable_render,
         use_image_obs=enable_render, 
     )
+    logger.info("环境创建完成")
     return env
 
 
@@ -67,6 +78,7 @@ class RobomimicImageRunner(BaseImageRunner):
             n_envs=None
         ):
         super().__init__(output_dir)
+        logger.info("初始化 RobomimicImageRunner")
 
         if n_envs is None:
             n_envs = n_train + n_test
@@ -77,6 +89,7 @@ class RobomimicImageRunner(BaseImageRunner):
         steps_per_render = max(robosuite_fps // fps, 1)
 
         # read from dataset
+        logger.info(f"从数据集获取元数据: {dataset_path}")
         env_meta = FileUtils.get_env_metadata_from_dataset(
             dataset_path)
         # disable object state observation
@@ -88,6 +101,7 @@ class RobomimicImageRunner(BaseImageRunner):
             rotation_transformer = RotationTransformer('axis_angle', 'rotation_6d')
 
         def env_fn():
+            logger.info("调用 env_fn 创建环境")
             robomimic_env = create_env(
                 env_meta=env_meta, 
                 shape_meta=shape_meta
@@ -96,6 +110,7 @@ class RobomimicImageRunner(BaseImageRunner):
             # Disabled to run more envs.
             # https://github.com/ARISE-Initiative/robosuite/blob/92abf5595eddb3a845cd1093703e5a3ccd01e77e/robosuite/environments/base.py#L247-L248
             robomimic_env.env.hard_reset = False
+            logger.info("环境包装完成")
             return MultiStepWrapper(
                 VideoRecordingWrapper(
                     RobomimicImageWrapper(
@@ -125,6 +140,7 @@ class RobomimicImageRunner(BaseImageRunner):
         # a separate env_fn that does not create OpenGL context (enable_render=False)
         # is needed to initialize spaces.
         def dummy_env_fn():
+            logger.info("调用 dummy_env_fn 创建环境")
             robomimic_env = create_env(
                     env_meta=env_meta, 
                     shape_meta=shape_meta,
@@ -159,6 +175,7 @@ class RobomimicImageRunner(BaseImageRunner):
         env_prefixs = list()
         env_init_fn_dills = list()
 
+        logger.info("准备训练环境初始化函数")
         # train
         with h5py.File(dataset_path, 'r') as f:
             for i in range(n_train):
@@ -168,6 +185,7 @@ class RobomimicImageRunner(BaseImageRunner):
 
                 def init_fn(env, init_state=init_state, 
                     enable_render=enable_render):
+                    logger.info(f"初始化训练环境 {train_idx}, enable_render={enable_render}")
                     # setup rendering
                     # video_wrapper
                     assert isinstance(env.env, VideoRecordingWrapper)
@@ -188,6 +206,7 @@ class RobomimicImageRunner(BaseImageRunner):
                 env_prefixs.append('train/')
                 env_init_fn_dills.append(dill.dumps(init_fn))
         
+        logger.info("准备测试环境初始化函数")
         # test
         for i in range(n_test):
             seed = test_start_seed + i
@@ -195,6 +214,7 @@ class RobomimicImageRunner(BaseImageRunner):
 
             def init_fn(env, seed=seed, 
                 enable_render=enable_render):
+                logger.info(f"初始化测试环境 seed={seed}, enable_render={enable_render}")
                 # setup rendering
                 # video_wrapper
                 assert isinstance(env.env, VideoRecordingWrapper)
@@ -216,10 +236,11 @@ class RobomimicImageRunner(BaseImageRunner):
             env_prefixs.append('test/')
             env_init_fn_dills.append(dill.dumps(init_fn))
 
-        env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
-        # env = SyncVectorEnv(env_fns)
+        logger.info(f"创建 AsyncVectorEnv 实例，共 {n_envs} 个环境")
+        # env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn)
+        env = SyncVectorEnv(env_fns)
 
-
+        logger.info("RobomimicImageRunner 初始化完成")
         self.env_meta = env_meta
         self.env = env
         self.env_fns = env_fns
@@ -237,6 +258,7 @@ class RobomimicImageRunner(BaseImageRunner):
         self.tqdm_interval_sec = tqdm_interval_sec
 
     def run(self, policy: BaseImagePolicy):
+        logger.info("开始执行 rollout")
         device = policy.device
         dtype = policy.dtype
         env = self.env
@@ -245,6 +267,7 @@ class RobomimicImageRunner(BaseImageRunner):
         n_envs = len(self.env_fns)
         n_inits = len(self.env_init_fn_dills)
         n_chunks = math.ceil(n_inits / n_envs)
+        logger.info(f"计划执行 {n_chunks} 个区块来处理 {n_inits} 个初始化")
 
         # allocate data
         all_video_paths = [None] * n_inits
@@ -263,21 +286,46 @@ class RobomimicImageRunner(BaseImageRunner):
                 this_init_fns.extend([self.env_init_fn_dills[0]]*n_diff)
             assert len(this_init_fns) == n_envs
 
+            logger.info(f"初始化区块 {chunk_idx+1}/{n_chunks} 的环境")
             # init envs
             env.call_each('run_dill_function', 
                 args_list=[(x,) for x in this_init_fns])
+            logger.info("环境初始化完成")
 
-            # start rollout
-            obs = env.reset()
+            logger.info("重置环境")
+
+            # # start rollout
+            # obs = env.reset()
+            # logger.info("环境重置完成")
+
+            
+            signal.signal(signal.SIGALRM, handler)
+            signal.alarm(120)  # 120秒超时
+            
+            try:
+                obs = env.reset()
+                logger.info("环境重置完成")
+            except TimeoutException as e:
+                logger.error(f"环境重置超时: {str(e)}")
+                # 创建空观测继续执行
+                obs = [None] * len(env_fns)
+                logger.warning("使用空观测继续执行")
+            finally:
+                signal.alarm(0)
+
             past_action = None
             policy.reset()
+            logger.info("策略重置完成")
 
             env_name = self.env_meta['env_name']
             pbar = tqdm.tqdm(total=self.max_steps, desc=f"Eval {env_name}Image {chunk_idx+1}/{n_chunks}", 
                 leave=False, mininterval=self.tqdm_interval_sec)
             
             done = False
+            step_count = 0
+            logger.info("开始环境交互循环")
             while not done:
+                logger.debug(f"步骤 {step_count}: 创建观测字典")
                 # create obs dict
                 np_obs_dict = dict(obs)
                 if self.past_action and (past_action is not None):
@@ -286,42 +334,68 @@ class RobomimicImageRunner(BaseImageRunner):
                         :,-(self.n_obs_steps-1):].astype(np.float32)
                 
                 # device transfer
+                logger.debug("设备数据传输")
                 obs_dict = dict_apply(np_obs_dict, 
                     lambda x: torch.from_numpy(x).to(
                         device=device))
 
+                logger.debug("策略预测动作")
                 # run policy
                 with torch.no_grad():
                     action_dict = policy.predict_action(obs_dict)
 
+                logger.debug("动作数据传输回CPU")
                 # device_transfer
                 np_action_dict = dict_apply(action_dict,
                     lambda x: x.detach().to('cpu').numpy())
 
                 action = np_action_dict['action']
                 if not np.all(np.isfinite(action)):
+                    logger.error(f"非法动作值: {action}")
                     print(action)
                     raise RuntimeError("Nan or Inf action")
                 
                 # step env
                 env_action = action
                 if self.abs_action:
+                    logger.debug("应用动作变换")
                     env_action = self.undo_transform_action(action)
 
-                obs, reward, done, info = env.step(env_action)
+                logger.debug(f"执行环境步骤 {step_count}")
+                try:
+                    obs, reward, done, info = env.step(env_action)
+                except Exception as e:
+                    logger.error(f"环境步骤出错: {str(e)}")
+                    raise
+                
                 done = np.all(done)
                 past_action = action
 
                 # update pbar
                 pbar.update(action.shape[1])
+                step_count += 1
+                
+                if step_count % 10 == 0:
+                    logger.info(f"已完成 {step_count}/{self.max_steps} 步")
+                
+                if step_count >= self.max_steps:
+                    logger.info(f"达到最大步数 {self.max_steps}")
+                    done = True
+            
             pbar.close()
+            logger.info(f"区块 {chunk_idx+1} 的环境交互完成")
 
+            logger.info("收集结果数据")
             # collect data for this round
             all_video_paths[this_global_slice] = env.render()[this_local_slice]
             all_rewards[this_global_slice] = env.call('get_attr', 'reward')[this_local_slice]
+            logger.info("结果数据收集完成")
+        
+        logger.info("重置环境以清除视频缓冲区")
         # clear out video buffer
         _ = env.reset()
         
+        logger.info("记录日志数据")
         # log
         max_rewards = collections.defaultdict(list)
         log_data = dict()
@@ -343,6 +417,7 @@ class RobomimicImageRunner(BaseImageRunner):
             # visualize sim
             video_path = all_video_paths[i]
             if video_path is not None:
+                logger.debug(f"添加视频: {video_path}")
                 sim_video = wandb.Video(video_path)
                 log_data[prefix+f'sim_video_{seed}'] = sim_video
         
@@ -351,7 +426,8 @@ class RobomimicImageRunner(BaseImageRunner):
             name = prefix+'mean_score'
             value = np.mean(value)
             log_data[name] = value
-
+        
+        logger.info("Rollout 执行完成")
         return log_data
 
     def undo_transform_action(self, action):
