@@ -7,6 +7,11 @@ Added render method.
 
 import numpy as np
 import multiprocessing as mp
+# eqdp改进 - 设置多进程启动方法为 'spawn'
+# 在spawn方法中，子进程会重新导入主模块，因此确保代码在子进程中导入时不会产生副作用（例如，立即初始化OpenGL）。我们的环境函数应该在子进程中创建环境，而不是在导入时创建
+import os
+if os.getenv("MUJOCO_GL") != "osmesa":
+    mp.set_start_method('spawn', force=True)
 import time
 import sys
 from enum import Enum

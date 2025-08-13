@@ -1,9 +1,9 @@
 defaults:
   - _self_
-  - task: mimicgen_rel
+  - task: mimicgen_abs
 
 name: equi_diff
-_target_: diffusion_policy.workspace.robomimic_train_equi_workspace.TrainEquiWorkspace
+_target_: diffusion_policy.workspace.train_equi_workspace.TrainEquiWorkspace
 
 shape_meta: ${task.shape_meta}
 exp_name: "default"
@@ -17,10 +17,10 @@ n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 dataset: diffusion_policy.dataset.robomimic_replay_image_sym_dataset.RobomimicReplayImageSymDataset
-dataset_path: data/robomimic/datasets/${task_name}/${task_name}.hdf5
+dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic_diffusion_equi_unet_cnn_enc_rel_policy.DiffusionEquiUNetCNNEncRelPolicy
+  _target_: diffusion_policy.policy.diffusion_equi_unet_cnn_enc_policy.DiffusionEquiUNetCNNEncPolicy
 
   shape_meta: ${shape_meta}
   
@@ -46,6 +46,7 @@ policy:
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
+  rot_aug: False
 
   # scheduler.step params
   # predict_epsilon: True
@@ -59,7 +60,7 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 128
+  batch_size: 64  # 128
   num_workers: 4
   shuffle: True
   pin_memory: True
@@ -67,7 +68,7 @@ dataloader:
   drop_last: true
 
 val_dataloader:
-  batch_size: 128
+  batch_size: 64  # 128
   num_workers: 8
   shuffle: False
   pin_memory: True
@@ -105,7 +106,7 @@ training:
   tqdm_interval_sec: 1.0
 
 logging:
-  project: diffusion_policy_${task_name}_vel
+  project: diffusion_policy_${task_name}
   resume: True
   mode: online
   name: equidiff_demo${n_demo}
