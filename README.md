@@ -3,17 +3,27 @@
 
 
 ## 数据集生成
--生成点云和体素观测:
-1.  生成点云和体素观测
+### 生成点云和体素观测
+1.  用cpu生成
     ```bash
-    python diffusion_policy/scripts/dataset_states_to_obs.py \
---input data/robomimic/datasets/stack_d1/stack_d1.hdf5 \
---output data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 \
---num_workers=32 
+    python diffusion_policy/scripts/dataset_states_to_obs.py --input data/robomimic/datasets/stack_d1/stack_d1.hdf5 --output data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 --num_workers=32 
+    ```
+2.  用gpu加速
+    ```bash
+    python diffusion_policy/scripts/dataset_states_to_obs_gpu.py --input data/robomimic/datasets/stack_d1/stack_d1.hdf5 --output data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 --num_workers=32 
+    ```
+### 原始dp的transformer（代码带“_gpu”默认用gpu加速）
+1.  转换stack_d1（非体素）
+    ```bash
+    python diffusion_policy/scripts/robomimic_dataset_conversion_gpu.py -i data/robomimic/datasets/stack_d1/stack_d1.hdf5 -o data/robomimic/datasets/stack_d1/stack_d1_abs.hdf5 -n 32 --use_gpu --suppress_warnings
+    ```
+2.  转换stack_d1_voxel（体素）
+    ```bash
+    python diffusion_policy/scripts/robomimic_dataset_conversion_gpu.py -i data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 -o data/robomimic/datasets/stack_d1/stack_d1_voxel_abs.hdf5 -n 32 --use_gpu --suppress_warnings
     ```
 
-
 ## 仿真可用
+仿真使用CUDA_VISIBLE_DEVICES=0有概率报错，可带前缀“MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa”
 1.  原始dp的unet
     ```bash
     HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet
@@ -23,6 +33,15 @@
     HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_transformer
     ```
 
+## 真实使用
+### 原始dp的unet训练
+    ```bash
+    HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train_diffusion_unet_real_image_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
+    ```
+### 原始dp的unet使用
+    ```bash
+    python eval_real_franka_rawdp_pro.py -i /media/disk7t/outputs/2025.08.08/01.52.33_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
+    ```
 
 
 
