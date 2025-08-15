@@ -2,8 +2,8 @@ conda activate equidiff
 
 1.  原始dp的unet的abs
 CUDA_VISIBLE_DEVICES=0 HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_abs task_name=stack_d1 n_demo=400
-2分钟一个epoch ，50000/400=125个epoch
+2分钟一个epoch ，50000/400=125个epoch，15gb
 
 5. eqdp的unet的rel 
 CUDA_VISIBLE_DEVICES=1 HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_rel task_name=stack_d1 n_demo=400
-5分钟一个epoch ，50000/400=125个epoch
+5分钟一个epoch ，50000/400=125个epoch，21gb
