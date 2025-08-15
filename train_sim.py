@@ -33,7 +33,7 @@ max_steps = {
     'square': 400,
     'test': 400,
 }
-print(max_steps)
+# print(max_steps)
 def get_ws_x_center(task_name):
     if task_name.startswith('kitchen_') or task_name.startswith('hammer_cleanup_'):
         return -0.2

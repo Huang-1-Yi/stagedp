@@ -1,7 +1,12 @@
 # Equivariant Diffusion Policy
-[Project Website](https://stagedp.github.io) | [Paper](https:/) | [Video](https://y)  
+[Project Website](https://stagedp.github.io) | [Github]https://github.com/Huang-1-Yi/stagedp | [Paper](https:/) | [Video](https://y)
 
 
+## 环境
+    ```bash
+    conda activate equidiff
+    ```
+    
 ## 数据集生成
 ### 生成点云和体素观测
 1.  用cpu生成
@@ -24,15 +29,26 @@
 
 ## 仿真可用
 仿真使用CUDA_VISIBLE_DEVICES=0有概率报错，可带前缀“MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa”
-1.  原始dp的unet
+1.  原始dp的unet的abs
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_abs task_name=stack_d1 n_demo=400
     ```
-2. 原始dp的transformer
+2. 原始dp的transformer的abs
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_transformer
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_transformer_abs task_name=stack_d1 n_demo=400
     ```
-
+3. 原始dp的体素的abs
+    ```bash
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_voxel_abs task_name=stack_d1 n_demo=400
+    ```
+4.  eqdp的unet的abs
+    ```bash
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_abs task_name=stack_d1 n_demo=400
+    ```
+5. eqdp的unet的rel
+    ```bash
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_rel task_name=stack_d1 n_demo=400
+    ```
 ## 真实使用
 ### 原始dp的unet训练
     ```bash

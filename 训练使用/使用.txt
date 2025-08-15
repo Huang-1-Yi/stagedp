@@ -1,0 +1,205 @@
+abs和rel的区别只有两个
+1.shape是[10]还是[7]
+2.abs_action是true还是false
+
+仿真可用：
+HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet
+HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_transformer
+
+
+
+
+
+数据集生成
+-生成点云和体素观测:
+
+python diffusion_policy/scripts/dataset_states_to_obs.py \
+--input data/robomimic/datasets/stack_d1/stack_d1.hdf5 \
+--output data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 \
+--num_workers=32 
+
+python diffusion_policy/scripts/dataset_states_to_obs_gpu.py \
+--input data/robomimic/datasets/stack_d1/stack_d1.hdf5 \
+--output data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 \
+--num_workers=32 \
+--use_env_cache \
+--use_gpu \
+--suppress_warnings
+
+-转换数据集中的动作空间:robomimic_dataset_conversion——只能从相对动作转换为绝对动作
+转换stack_d1（非体素）
+python diffusion_policy/scripts/robomimic_dataset_conversion_gpu.py \
+-i data/robomimic/datasets/stack_d1/stack_d1.hdf5 \
+-o data/robomimic/datasets/stack_d1/stack_d1_abs.hdf5 \
+-n 32 \
+--use_gpu \
+--suppress_warnings
+
+转换stack_d1_voxel（体素）
+python diffusion_policy/scripts/robomimic_dataset_conversion_gpu.py \
+-i data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 \
+-o data/robomimic/datasets/stack_d1/stack_d1_voxel_abs.hdf5 \
+-n 32 \
+--use_gpu \
+--suppress_warnings
+
+
+
+仿真CUDA_VISIBLE_DEVICES=0
+HYDRA_FULL_ERROR=1  MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa \
+python train_sim.py --config-name=robomimic_train_diffusion_unet task_name=stack_d1 \
+n_demo=100
+
+python train_sim.py --config-name=robomimic_train_diffusion_unet task_name=stack_d1 \
+n_demo=100
+
+
+MUJOCO_GL=osmesa \
+PYOPENGL_PLATFORM=osmesa \
+python train_sim.py \
+    --config-name=robomimic_train_diffusion_unet \
+    task_name=stack_d1 \
+    n_demo=100 \
+    training.device="cuda:0" \
+    env_runner.n_train=1 \ 
+    env_runner.n_rollout=1 
+
+
+
+
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train_sim.py --config-name=robomimic_train_diffusion_unet task_name=square n_demo=100
+
+
+python train.py --config-name=robomimic_train_equi_diffusion_unet_abs task_name=stack_d1 n_demo=100
+
+
+
+
+
+
+HYDRA_FULL_ERROR=1 python train.py --config-name=dp3_train_diffusion_unet_real_image_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
+
+
+
+
+conda install -n base -c conda-forge mamba
+
+
+conda activate dp0628
+
+原始dp的unet
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train_diffusion_unet_real_image_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
+
+python eval_real_franka_rawdp_pro.py -i /media/disk7t/outputs/2025.08.08/01.52.33_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
+# CUDA_VISIBLE_DEVICES=1  python eval_real_franka_rawdp.py -i /media/disk7t/outputs/2025.08.08/01.52.33_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt  -o data/0808 -ri 192.168.0.168
+能成功
+
+
+
+
+原始dp的tf
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=dp_train_diffusion_transformer_real_hybrid_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807
+
+
+
+conda activate umi
+
+umi的unet
+任务1
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr.zip
+python eval_real_franka_rawdp_pro.py -i /media/disk7t/outputs/2025.08.08/14.31.56_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
+
+任务2
+CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+python eval_real_franka_ds_pro.py -i /media/disk7t/outputs/2025.08.08/14.31.56_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+
+python eval_real_franka_ds_pro.py -i /media/disk7t/outputs/2025.08.08/23.12.30_ds_train_diffusion_unet_timm_umi/checkpoints/epoch=0590-epoch=590.00000.ckpt  -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+
+
+umi的任务,有0.1扰动,无时延
+CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+
+python eval_real_franka_ds_pro.py -i /media/disk7t/outputs/2025.08.09/20.49.22_ds_train_diffusion_unet_timm_umi/checkpoints  -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+
+
+
+umi的任务,无0.1扰动,无时延
+CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+python eval_real_franka_ds_pro.py -i /media/disk7t/outputs/2025.08.10/13.27.12_ds_train_diffusion_unet_timm_umi/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168 --robot_config=example/eval_robots_config.yaml
+
+umi的任务,无0.1扰动,无时延,无裁剪
+lr: 1.0e-4  # 1.0e-4    # raw 3.0e-4
+CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+
+
+
+dp3的
+CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+python eval_real_franka_rawdp.py -i /media/disk7t/outputs/2025.08.10/13.22.59_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
+python eval_real_franka_rawdp_pro.py -i /media/disk7t/outputs/2025.08.10/13.22.59_dp_train_diffusion_unet_image_real_image/checkpoints/latest.ckpt -o data/0808 -ri 192.168.0.168
+
+
+umi的tf
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_transformer_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/cup_and_saucer0805/replay_buffer.zarr.zip
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+https://robomimic.github.io/docs/v0.2/datasets/robosuite.html
+https://zhuanlan.zhihu.com/p/6911373619
+
+conda activate umi
+python /home/hy/Desktop/robomimic-0.2/robomimic/scripts/dataset_states_to_obs.py \
+--dataset /home/hy/Desktop/stagedp/data/robomimic/datasets/stack_d1/stack_d1.hdf5 \
+--output_name /home/hy/Desktop/stagedp/data/robomimic/datasets/stack_d1/stack_d1_abs.hdf5 \
+--done_mode 2 --camera_names agentview robot_eye_in_hand --camera_height 84 --camera_width 84
+
+
+python dataset_states_to_obs.py --dataset /path/to/demo.hdf5 --output_name image.hdf5 --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_widt
+python /home/hy/Desktop/robomimic-0.2/robomimic/scripts/dataset_states_to_obs.py --dataset /home/hy/Desktop/stagedp/data/robomimic/datasets/stack_d1/stack_d1.hdf5 --output_name /home/hy/Desktop/stagedp/data/robomimic/datasets/stack_d1/stack_d1_abs.hdf5 --done_mode 2 --camera_names agentview robot0_eye_in_hand --camera_height 84 --camera_width 84
+
+
+
+
+
+
+

@@ -1,6 +1,6 @@
 from diffusion_policy.dataset.base_dataset import LinearNormalizer
 from diffusion_policy.model.common.normalizer import LinearNormalizer
-from diffusion_policy.dataset.robomimic_replay_image_dataset import RobomimicReplayImageDataset, normalizer_from_stat
+from diffusion_policy.dataset.robomimic.replay_image_dataset import RobomimicReplayImageDataset, normalizer_from_stat
 from diffusion_policy.common.normalize_util import (
     robomimic_abs_action_only_symmetric_normalizer_from_stat,
     get_range_normalizer_from_stat,

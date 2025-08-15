@@ -1,0 +1,21 @@
+(umi) hy@a:~/Desktop/stagedp$ CUDA_VISIBLE_DEVICES=0 python train.py --config-name=ds_train_diffusion_unet_timm_umi_workspace task.dataset_path=/home/hy/Desktop/dp_0314/data/pen_0807/replay_buffer.zarr.zip
+/opt/miniconda3/envs/umi/lib/python3.9/site-packages/torch/utils/cpp_extension.py:28: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import packaging  # type: ignore[attr-defined]
+[2025-08-10 13:27:17,305][timm.models._builder][INFO] - Loading pretrained weights from Hugging Face hub (timm/vit_base_patch16_clip_224.openai)
+rgb keys:          ['camera0_rgb']
+low_dim_keys keys: ['robot0_eef_pos', 'robot0_eef_rot_axis_angle', 'robot0_eef_rot_axis_angle_wrt_start', 'robot0_gripper_width']
+[2025-08-10 13:27:18,898][diffusion_policy.model.vision.ds_timm_obs_encoder][INFO] - number of parameters: 8.579942e+07
+[2025-08-10 13:27:19,586][diffusion_policy.model.diffusion.conditional_unet1d][INFO] - number of parameters: 8.547419e+07
+==> reduce pretrained obs_encorder's lr
+obs_encorder params: 151
+/opt/miniconda3/envs/umi/lib/python3.9/site-packages/wandb/sdk/verify/verify.py:11: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import parse_version
+wandb: Currently logged in as: 464623053. Use `wandb login --relogin` to force relogin
+wandb: wandb version 0.21.1 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.15.8
+wandb: Run data is saved locally in /home/hy/Desktop/stagedp/wandb/run-20250810_132722-kqg4k6zw
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run 2025.08.10-13.27.12_ds_train_diffusion_unet_timm_umi
+wandb: ⭐️ View project at https://wandb.ai/464623053/umi
+wandb: 🚀 View run at https://wandb.ai/464623053/umi/runs/kqg4k6zw
