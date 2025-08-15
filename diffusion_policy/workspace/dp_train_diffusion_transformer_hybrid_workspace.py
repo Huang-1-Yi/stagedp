@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
+from wandb import Settings  # 在文件顶部导入 Settings
 import tqdm
 import numpy as np
 import shutil
@@ -110,10 +111,12 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
         assert isinstance(env_runner, BaseImageRunner)
 
         # configure logging
+        # 在 run 方法中找到 wandb.init 部分
+        print("开始设置wandb，并Logging to wandb")
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            **cfg.logging,
         )
         wandb.config.update(
             {

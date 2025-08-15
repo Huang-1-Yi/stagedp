@@ -22,11 +22,12 @@ from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
+from termcolor import cprint
 import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.robomimic_diffusion_transformer_hybrid_image_policy import DiffusionTransformerHybridImagePolicy
+from diffusion_policy.policy.robomimic.diffusion_transformer_hybrid_image_policy import DiffusionTransformerHybridImagePolicy
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -141,11 +142,27 @@ class TrainDiffusionTransformerHybridWorkspace(BaseWorkspace):
             output_dir=self.output_dir)
         assert isinstance(env_runner, BaseImageRunner)
 
-        # configure logging
+        # 引入了 termcolor 库来在控制台中输出带颜色的日志信息，使得日志更加易于阅读
+        cfg.logging.name = str(cfg.logging.name)
+        cprint("-----------------------------", "yellow")
+        cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
+        cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
+        cprint("-----------------------------", "yellow")
+        # 创建 logging 配置的副本
+        logging_config = OmegaConf.to_container(cfg.logging, resolve=True)
+        if 'mode' in logging_config:
+            logging_config.pop('mode')  # 删除 logging 配置中的 mode 参数
+
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            mode="offline",
+            **logging_config,  # 使用修改后的配置
+        )
+        wandb.config.update(
+            {
+                "output_dir": self.output_dir,
+            }
         )
         wandb.config.update(
             {

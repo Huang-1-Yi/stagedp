@@ -3,7 +3,7 @@ defaults:
   - task: mimicgen_abs
 
 name: act
-_target_: diffusion_policy.workspace.train_act_workspace.TrainActWorkspace
+_target_: diffusion_policy.workspace.robomimic.train_act_workspace.TrainActWorkspace
 
 shape_meta: ${task.shape_meta}
 exp_name: "default"
@@ -16,7 +16,7 @@ n_action_steps: 10
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
-dataset: diffusion_policy.dataset.robomimic_replay_image_dataset.RobomimicReplayImageDataset
+dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplayImageDataset
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
@@ -45,7 +45,7 @@ val_dataloader:
 
 training:
   device: "cuda:0"
-  seed: 0
+  seed: 42
   debug: False
   resume: True
   num_epochs: ${eval:'50000 / ${n_demo}'}
@@ -70,7 +70,7 @@ checkpoint:
     monitor_key: test_mean_score
     mode: max
     k: 5
-    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.4f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

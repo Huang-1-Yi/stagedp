@@ -16,11 +16,12 @@ from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
+from termcolor import cprint
 import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.robomimic_diffusion_unet_hybrid_image_policy import DiffusionUnetHybridImagePolicy
+from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -31,7 +32,7 @@ from diffusion_policy.model.common.lr_scheduler import get_scheduler
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
+class TrainEquiWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -44,30 +45,19 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: DiffusionUnetHybridImagePolicy = hydra.utils.instantiate(cfg.policy)
+        self.model: BaseImagePolicy = hydra.utils.instantiate(cfg.policy)
 
-        self.ema_model: DiffusionUnetHybridImagePolicy = None
+        self.ema_model: BaseImagePolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 
         # configure training state
-        # 在transformer中，优化器的配置是由 get_optimizer 方法提供的
-        # 而在unet中，优化器通过 hydra.utils.instantiate 来直接根据配置文件进行初始化，
-        # 并显式传递了 params=self.model.parameters()。
-        self.optimizer = hydra.utils.instantiate(
-            cfg.optimizer, params=self.model.parameters())
-        """
-        *****适合适合需要灵活配置和替换优化器的场景，尤其是在实验中需要不断调整优化器超参数时
-        将优化器的创建过程外部化，由外部的配置文件来处理优化器的配置，而模型本身仅提供参数。优化器实例化时需要显式传入模型参数。优势和劣势如下：
-        优势：
-            更高的灵活性：优化器的配置独立于模型，可以根据需要更改优化器，而无需修改模型代码。这对实验和调试时非常有用。
-            配置文件中对优化器有清晰的控制，可以使用 hydra 等工具灵活地调整优化器的超参数。
-            更便于调试和复用，因为优化器的配置完全在外部，不受模型内部的限制。
-        劣势：
-            需要明确传递参数：优化器实例化时必须显式传入模型的参数，这意味着需要在多个地方维护对模型参数的访问权。
-            优化器的配置不在模型内部，可能导致在一些特殊情况下配置不一致或难以管理
-        """
-
+        self.optimizer = self.model.get_optimizer(**cfg.optimizer)
+        total_params = 0
+        for param_group in self.optimizer.param_groups:
+            for param in param_group['params']:
+                total_params += param.numel()
+        assert total_params == sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         # configure training state
         self.global_step = 0
         self.epoch = 0
@@ -126,18 +116,28 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
             output_dir=self.output_dir)
         assert isinstance(env_runner, BaseImageRunner)
 
-        # configure logging
+        # 引入了 termcolor 库来在控制台中输出带颜色的日志信息，使得日志更加易于阅读
+        cfg.logging.name = str(cfg.logging.name)
+        cprint("-----------------------------", "yellow")
+        cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
+        cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
+        cprint("-----------------------------", "yellow")
+        # 创建 logging 配置的副本
+        logging_config = OmegaConf.to_container(cfg.logging, resolve=True)
+        if 'mode' in logging_config:
+            logging_config.pop('mode')  # 删除 logging 配置中的 mode 参数
+
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            mode="offline",
+            **logging_config,  # 使用修改后的配置
         )
         wandb.config.update(
             {
                 "output_dir": self.output_dir,
             }
         )
-
         # configure checkpoint
         topk_manager = TopKCheckpointManager(
             save_dir=os.path.join(self.output_dir, 'checkpoints'),
@@ -150,7 +150,7 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         if self.ema_model is not None:
             self.ema_model.to(device)
         optimizer_to(self.optimizer, device)
-
+        
         # save batch for sampling
         train_sampling_batch = None
 
@@ -207,10 +207,9 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         is_last_batch = (batch_idx == (len(train_dataloader)-1))
                         if not is_last_batch:
                             # log of last step is combined with validation and rollout
-                            wandb_run.log(step_log, step=self.global_step)
-                            json_logger.log(step_log)
-                            # self.global_step += 1
-                        self.global_step += 1  # ✅ 移动到外层
+                            # wandb_run.log(step_log, step=self.global_step)
+                            # json_logger.log(step_log)
+                            self.global_step += 1
 
                         if (cfg.training.max_train_steps is not None) \
                             and batch_idx >= (cfg.training.max_train_steps-1):
@@ -227,14 +226,11 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                     policy = self.ema_model
                 policy.eval()
 
-                print("Running rollout...")
                 # run rollout
                 if (self.epoch % cfg.training.rollout_every) == 0:
                     runner_log = env_runner.run(policy)
                     # log all
                     step_log.update(runner_log)
-                print("Rollout done.")
-                
 
                 # run validation
                 if (self.epoch % cfg.training.val_every) == 0:
@@ -272,7 +268,6 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         del result
                         del pred_action
                         del mse
-                        # torch.cuda.empty_cache()
                 
                 # checkpoint
                 if (self.epoch % cfg.training.checkpoint_every) == 0:
@@ -310,9 +305,8 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainDiffusionUnetHybridWorkspace(cfg)
+    workspace = TrainEquiWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":
     main()
-

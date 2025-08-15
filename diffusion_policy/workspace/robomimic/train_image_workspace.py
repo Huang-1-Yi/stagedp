@@ -1,3 +1,9 @@
+"""
+代码5 中，train_on_batch 返回的 info 字典包含了一个嵌套的 losses 字典，其中包括具体的损失项（例如 action_loss）。这是一个较为详细的日志记录方式，可以追踪多个损失项。
+代码3 中，日志记录较为简单，只有全局损失值被记录和输出
+"""
+
+
 if __name__ == "__main__":
     import sys
     import os
@@ -16,11 +22,12 @@ from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
+from termcolor import cprint
 import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.act_policy import ACTPolicyWrapper
+from diffusion_policy.policy.robomimic.image_policy import RobomimicImagePolicy
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -30,7 +37,7 @@ from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainActWorkspace(BaseWorkspace):
+class TrainRobomimicImageWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -43,7 +50,7 @@ class TrainActWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: ACTPolicyWrapper = hydra.utils.instantiate(cfg.policy)
+        self.model: RobomimicImagePolicy = hydra.utils.instantiate(cfg.policy)
 
         # configure training state
         self.global_step = 0
@@ -61,13 +68,6 @@ class TrainActWorkspace(BaseWorkspace):
                 self.epoch += 1
                 self.global_step += 1
 
-        # configure env
-        env_runner: BaseImageRunner
-        env_runner = hydra.utils.instantiate(
-            cfg.task.env_runner,
-            output_dir=self.output_dir)
-        assert isinstance(env_runner, BaseImageRunner)
-
         # configure dataset
         dataset: BaseImageDataset
         dataset = hydra.utils.instantiate(cfg.task.dataset)
@@ -81,17 +81,34 @@ class TrainActWorkspace(BaseWorkspace):
 
         self.model.set_normalizer(normalizer)
 
-        # configure logging
+        # configure env
+        env_runner: BaseImageRunner
+        env_runner = hydra.utils.instantiate(
+            cfg.task.env_runner,
+            output_dir=self.output_dir)
+        assert isinstance(env_runner, BaseImageRunner)
+
+        # 引入了 termcolor 库来在控制台中输出带颜色的日志信息，使得日志更加易于阅读
+        cfg.logging.name = str(cfg.logging.name)
+        cprint("-----------------------------", "yellow")
+        cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
+        cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
+        cprint("-----------------------------", "yellow")
+        # 创建 logging 配置的副本
+        logging_config = OmegaConf.to_container(cfg.logging, resolve=True)
+        if 'mode' in logging_config:
+            logging_config.pop('mode')  # 删除 logging 配置中的 mode 参数
+
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            mode="offline",
+            **logging_config,  # 使用修改后的配置
         )
         wandb.config.update(
             {
                 "output_dir": self.output_dir,
-            },
-            allow_val_change=True
+            }
         )
 
         # configure checkpoint
@@ -114,6 +131,7 @@ class TrainActWorkspace(BaseWorkspace):
             cfg.training.rollout_every = 1
             cfg.training.checkpoint_every = 1
             cfg.training.val_every = 1
+            cfg.training.sample_every = 1
 
         # training loop
         log_path = os.path.join(self.output_dir, 'logs.json.txt')
@@ -130,16 +148,13 @@ class TrainActWorkspace(BaseWorkspace):
                         if train_sampling_batch is None:
                             train_sampling_batch = batch
 
-                        # compute loss
-                        loss = self.model.compute_loss(batch)
-                        loss.backward()
-                        # step optimizer
-                        # if self.global_step % cfg.training.gradient_accumulate_every == 0:
-                        self.model.optimizer.step()
-                        self.model.optimizer.zero_grad()
-
+                        # 使用了 train_on_batch 方法进行训练，在每个批次上计算损失并执行优化
+                        # 而不是模型的标准 compute_loss 方法计算损失
+                        info = self.model.train_on_batch(batch, epoch=self.epoch)
                         # logging 
-                        loss_cpu = loss.item()
+                        loss_cpu = info['losses']['action_loss'].item()
+                        
+                        
                         tepoch.set_postfix(loss=loss_cpu, refresh=False)
                         train_losses.append(loss_cpu)
                         step_log = {
@@ -181,7 +196,8 @@ class TrainActWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                loss = self.model.compute_loss(batch)
+                                info = self.model.train_on_batch(batch, epoch=self.epoch, validate=True)
+                                loss = info['losses']['action_loss']
                                 val_losses.append(loss)
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
@@ -191,24 +207,46 @@ class TrainActWorkspace(BaseWorkspace):
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
 
-                # # run diffusion sampling on a training batch
-                # if (self.epoch % cfg.training.sample_every) == 0:
-                #     with torch.no_grad():
-                #         # sample trajectory from training set, and evaluate difference
-                #         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
-                #         obs_dict = batch['obs']
-                #         gt_action = batch['action']
+                # 在训练过程中，会对一个训练批次进行“扩散采样”，并计算预测动作的均方误差（MSE）
+                # run diffusion sampling on a training batch
+                if (self.epoch % cfg.training.sample_every) == 0:
+                    with torch.no_grad():
+                        # sample trajectory from training set, and evaluate difference
+                        batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
+                        obs_dict = batch['obs']
+                        gt_action = batch['action']
 
-                #         result = self.model.predict_action(obs_dict)
-                #         pred_action = result['action_pred']
-                #         mse = torch.nn.functional.mse_loss(pred_action, gt_action)
-                #         step_log['train_action_mse_error'] = mse.item()
-                #         del batch
-                #         del obs_dict
-                #         del gt_action
-                #         del result
-                #         del pred_action
-                #         del mse
+                        # robomimic的采样方法考虑了多步预测（基于时间步 T），并且重置了模型状态。
+                        # dp3的采样方法相对简洁，直接计算单步预测的误差
+                        
+                        # 实现1：robomimic这段代码显式地重置模型状态，并根据观察数据进行多步动作预测
+                        T = gt_action.shape[1]
+                        pred_actions = list()
+                        self.model.reset()
+                        for i in range(T):
+                            result = self.model.predict_action(
+                                dict_apply(obs_dict, lambda x: x[:,[i]])
+                            )
+                            pred_actions.append(result['action'])
+                        
+                        # 实现2： dp3在训练过程中也有采样步骤，但与代码5中的具体实现有所不同，且代码3中的采样方法更为简洁，直接从训练数据批次中获取预测结果并计算MSE。
+                        # result = policy.predict_action(obs_dict)
+                        # pred_actions = result['action_pred']
+
+                        pred_actions = torch.cat(pred_actions, dim=1)
+                        mse = torch.nn.functional.mse_loss(pred_actions, gt_action)
+                        step_log['train_action_mse_error'] = mse.item()
+                        del batch
+                        del obs_dict
+                        del gt_action
+                        del result
+                        del pred_action
+                        del mse
+
+
+
+
+
 
                 # checkpoint
                 if (self.epoch % cfg.training.checkpoint_every) == 0:
@@ -247,7 +285,7 @@ class TrainActWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainActWorkspace(cfg)
+    workspace = TrainRobomimicImageWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":

@@ -25,14 +25,15 @@ from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
+from termcolor import cprint
 import tqdm
 import numpy as np
-from termcolor import cprint
+
 import shutil
 import time
 import threading
 from hydra.core.hydra_config import HydraConfig
-from diffusion_policy.policy.robomimic_dp3 import DP3
+from diffusion_policy.policy.robomimic.dp3 import DP3
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -167,11 +168,16 @@ class TrainDP3Workspace:
         cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
         cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
         cprint("-----------------------------", "yellow")
-        # configure logging
+        # 创建 logging 配置的副本
+        logging_config = OmegaConf.to_container(cfg.logging, resolve=True)
+        if 'mode' in logging_config:
+            logging_config.pop('mode')  # 删除 logging 配置中的 mode 参数
+
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            mode="offline",
+            **logging_config,  # 使用修改后的配置
         )
         wandb.config.update(
             {

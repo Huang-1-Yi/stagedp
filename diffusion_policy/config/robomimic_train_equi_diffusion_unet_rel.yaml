@@ -3,7 +3,7 @@ defaults:
   - task: mimicgen_abs
 
 name: equi_diff
-_target_: diffusion_policy.workspace.train_equi_workspace.TrainEquiWorkspace
+_target_: diffusion_policy.workspace.robomimic.train_equi_workspace.TrainEquiWorkspace
 
 shape_meta: ${task.shape_meta}
 exp_name: "default"
@@ -16,11 +16,11 @@ n_action_steps: 8
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
-dataset: diffusion_policy.dataset.robomimic_replay_image_sym_dataset.RobomimicReplayImageSymDataset
+dataset: diffusion_policy.dataset.robomimic.replay_image_sym_dataset.RobomimicReplayImageSymDataset
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.diffusion_equi_unet_cnn_enc_policy.DiffusionEquiUNetCNNEncPolicy
+  _target_: diffusion_policy.policy.robomimic.diffusion_equi_unet_cnn_enc_policy.DiffusionEquiUNetCNNEncPolicy
 
   shape_meta: ${shape_meta}
   
@@ -60,16 +60,16 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 64  # 128
-  num_workers: 4
+  batch_size: 16  # 128
+  num_workers: 16
   shuffle: True
   pin_memory: True
   persistent_workers: True
   drop_last: true
 
 val_dataloader:
-  batch_size: 64  # 128
-  num_workers: 8
+  batch_size: 16  # 128
+  num_workers: 16
   shuffle: False
   pin_memory: True
   persistent_workers: True
@@ -82,7 +82,7 @@ optimizer:
 
 training:
   device: "cuda:0"
-  seed: 0
+  seed: 42
   debug: False
   resume: True
   # optimization
@@ -119,7 +119,7 @@ checkpoint:
     monitor_key: test_mean_score
     mode: max
     k: 5
-    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt'
+    format_str: 'epoch={epoch:04d}-test_mean_score={test_mean_score:.4f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 

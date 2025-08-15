@@ -1,9 +1,3 @@
-"""
-代码5 中，train_on_batch 返回的 info 字典包含了一个嵌套的 losses 字典，其中包括具体的损失项（例如 action_loss）。这是一个较为详细的日志记录方式，可以追踪多个损失项。
-代码3 中，日志记录较为简单，只有全局损失值被记录和输出
-"""
-
-
 if __name__ == "__main__":
     import sys
     import os
@@ -22,21 +16,23 @@ from torch.utils.data import DataLoader
 import copy
 import random
 import wandb
+from termcolor import cprint
 import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.robomimic_image_policy import RobomimicImagePolicy
+from diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy import DiffusionUnetHybridImagePolicy
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
 from diffusion_policy.common.json_logger import JsonLogger
 from diffusion_policy.common.pytorch_util import dict_apply, optimizer_to
-
+from diffusion_policy.model.diffusion.ema_model import EMAModel
+from diffusion_policy.model.common.lr_scheduler import get_scheduler
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainRobomimicImageWorkspace(BaseWorkspace):
+class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -49,7 +45,29 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: RobomimicImagePolicy = hydra.utils.instantiate(cfg.policy)
+        self.model: DiffusionUnetHybridImagePolicy = hydra.utils.instantiate(cfg.policy)
+
+        self.ema_model: DiffusionUnetHybridImagePolicy = None
+        if cfg.training.use_ema:
+            self.ema_model = copy.deepcopy(self.model)
+
+        # configure training state
+        # 在transformer中，优化器的配置是由 get_optimizer 方法提供的
+        # 而在unet中，优化器通过 hydra.utils.instantiate 来直接根据配置文件进行初始化，
+        # 并显式传递了 params=self.model.parameters()。
+        self.optimizer = hydra.utils.instantiate(
+            cfg.optimizer, params=self.model.parameters())
+        """
+        *****适合适合需要灵活配置和替换优化器的场景，尤其是在实验中需要不断调整优化器超参数时
+        将优化器的创建过程外部化，由外部的配置文件来处理优化器的配置，而模型本身仅提供参数。优化器实例化时需要显式传入模型参数。优势和劣势如下：
+        优势：
+            更高的灵活性：优化器的配置独立于模型，可以根据需要更改优化器，而无需修改模型代码。这对实验和调试时非常有用。
+            配置文件中对优化器有清晰的控制，可以使用 hydra 等工具灵活地调整优化器的超参数。
+            更便于调试和复用，因为优化器的配置完全在外部，不受模型内部的限制。
+        劣势：
+            需要明确传递参数：优化器实例化时必须显式传入模型的参数，这意味着需要在多个地方维护对模型参数的访问权。
+            优化器的配置不在模型内部，可能导致在一些特殊情况下配置不一致或难以管理
+        """
 
         # configure training state
         self.global_step = 0
@@ -79,6 +97,28 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
         val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
 
         self.model.set_normalizer(normalizer)
+        if cfg.training.use_ema:
+            self.ema_model.set_normalizer(normalizer)
+
+        # configure lr scheduler
+        lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=self.optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=(
+                len(train_dataloader) * cfg.training.num_epochs) \
+                    // cfg.training.gradient_accumulate_every,
+            # pytorch assumes stepping LRScheduler every epoch
+            # however huggingface diffusers steps it every batch
+            last_epoch=self.global_step-1
+        )
+
+        # configure ema
+        ema: EMAModel = None
+        if cfg.training.use_ema:
+            ema = hydra.utils.instantiate(
+                cfg.ema,
+                model=self.ema_model)
 
         # configure env
         env_runner: BaseImageRunner
@@ -87,11 +127,25 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
             output_dir=self.output_dir)
         assert isinstance(env_runner, BaseImageRunner)
 
+        # 引入了 termcolor 库来在控制台中输出带颜色的日志信息，使得日志更加易于阅读
+        cfg.logging.name = str(cfg.logging.name)
+        cprint("-----------------------------", "yellow")
+        cprint(f"[WandB] group: {cfg.logging.group}", "yellow")
+        cprint(f"[WandB] name: {cfg.logging.name}", "yellow")
+        cprint("-----------------------------", "yellow")
         # configure logging
+        print("开始设置wandb，并Logging to wandb")
+        # 修改后 - 方案1：确保只传递一次 mode 参数
+        # 创建 logging 配置的副本
+        logging_config = OmegaConf.to_container(cfg.logging, resolve=True)
+        if 'mode' in logging_config:
+            logging_config.pop('mode')  # 删除 logging 配置中的 mode 参数
+
         wandb_run = wandb.init(
             dir=str(self.output_dir),
             config=OmegaConf.to_container(cfg, resolve=True),
-            **cfg.logging
+            mode="offline",
+            **logging_config,  # 使用修改后的配置
         )
         wandb.config.update(
             {
@@ -108,6 +162,9 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
         # device transfer
         device = torch.device(cfg.training.device)
         self.model.to(device)
+        if self.ema_model is not None:
+            self.ema_model.to(device)
+        optimizer_to(self.optimizer, device)
 
         # save batch for sampling
         train_sampling_batch = None
@@ -136,19 +193,30 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                         if train_sampling_batch is None:
                             train_sampling_batch = batch
 
-                        # 使用了 train_on_batch 方法进行训练，在每个批次上计算损失并执行优化
-                        # 而不是模型的标准 compute_loss 方法计算损失
-                        info = self.model.train_on_batch(batch, epoch=self.epoch)
-                        # logging 
-                        loss_cpu = info['losses']['action_loss'].item()
+                        # compute loss
+                        raw_loss = self.model.compute_loss(batch)
+                        loss = raw_loss / cfg.training.gradient_accumulate_every
+                        loss.backward()
+
+                        # step optimizer
+                        if self.global_step % cfg.training.gradient_accumulate_every == 0:
+                            self.optimizer.step()
+                            self.optimizer.zero_grad()
+                            lr_scheduler.step()
                         
-                        
-                        tepoch.set_postfix(loss=loss_cpu, refresh=False)
-                        train_losses.append(loss_cpu)
+                        # update ema
+                        if cfg.training.use_ema:
+                            ema.step(self.model)
+
+                        # logging
+                        raw_loss_cpu = raw_loss.item()
+                        tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
+                        train_losses.append(raw_loss_cpu)
                         step_log = {
-                            'train_loss': loss_cpu,
+                            'train_loss': raw_loss_cpu,
                             'global_step': self.global_step,
-                            'epoch': self.epoch
+                            'epoch': self.epoch,
+                            'lr': lr_scheduler.get_last_lr()[0]
                         }
 
                         is_last_batch = (batch_idx == (len(train_dataloader)-1))
@@ -156,7 +224,8 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                             # log of last step is combined with validation and rollout
                             wandb_run.log(step_log, step=self.global_step)
                             json_logger.log(step_log)
-                            self.global_step += 1
+                            # self.global_step += 1
+                        self.global_step += 1  # ✅ 移动到外层
 
                         if (cfg.training.max_train_steps is not None) \
                             and batch_idx >= (cfg.training.max_train_steps-1):
@@ -168,13 +237,19 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                 step_log['train_loss'] = train_loss
 
                 # ========= eval for this epoch ==========
-                self.model.eval()
+                policy = self.model
+                if cfg.training.use_ema:
+                    policy = self.ema_model
+                policy.eval()
 
+                print("Running rollout...")
                 # run rollout
                 if (self.epoch % cfg.training.rollout_every) == 0:
-                    runner_log = env_runner.run(self.model)
+                    runner_log = env_runner.run(policy)
                     # log all
                     step_log.update(runner_log)
+                print("Rollout done.")
+                
 
                 # run validation
                 if (self.epoch % cfg.training.val_every) == 0:
@@ -184,8 +259,7 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                                 leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
                             for batch_idx, batch in enumerate(tepoch):
                                 batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-                                info = self.model.train_on_batch(batch, epoch=self.epoch, validate=True)
-                                loss = info['losses']['action_loss']
+                                loss = self.model.compute_loss(batch)
                                 val_losses.append(loss)
                                 if (cfg.training.max_val_steps is not None) \
                                     and batch_idx >= (cfg.training.max_val_steps-1):
@@ -195,7 +269,6 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                             # log epoch average validation loss
                             step_log['val_loss'] = val_loss
 
-                # 在训练过程中，会对一个训练批次进行“扩散采样”，并计算预测动作的均方误差（MSE）
                 # run diffusion sampling on a training batch
                 if (self.epoch % cfg.training.sample_every) == 0:
                     with torch.no_grad():
@@ -203,26 +276,10 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                         batch = dict_apply(train_sampling_batch, lambda x: x.to(device, non_blocking=True))
                         obs_dict = batch['obs']
                         gt_action = batch['action']
-
-                        # robomimic的采样方法考虑了多步预测（基于时间步 T），并且重置了模型状态。
-                        # dp3的采样方法相对简洁，直接计算单步预测的误差
                         
-                        # 实现1：robomimic这段代码显式地重置模型状态，并根据观察数据进行多步动作预测
-                        T = gt_action.shape[1]
-                        pred_actions = list()
-                        self.model.reset()
-                        for i in range(T):
-                            result = self.model.predict_action(
-                                dict_apply(obs_dict, lambda x: x[:,[i]])
-                            )
-                            pred_actions.append(result['action'])
-                        
-                        # 实现2： dp3在训练过程中也有采样步骤，但与代码5中的具体实现有所不同，且代码3中的采样方法更为简洁，直接从训练数据批次中获取预测结果并计算MSE。
-                        # result = policy.predict_action(obs_dict)
-                        # pred_actions = result['action_pred']
-
-                        pred_actions = torch.cat(pred_actions, dim=1)
-                        mse = torch.nn.functional.mse_loss(pred_actions, gt_action)
+                        result = policy.predict_action(obs_dict)
+                        pred_action = result['action_pred']
+                        mse = torch.nn.functional.mse_loss(pred_action, gt_action)
                         step_log['train_action_mse_error'] = mse.item()
                         del batch
                         del obs_dict
@@ -230,12 +287,8 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                         del result
                         del pred_action
                         del mse
-
-
-
-
-
-
+                        # torch.cuda.empty_cache()
+                
                 # checkpoint
                 if (self.epoch % cfg.training.checkpoint_every) == 0:
                     # checkpointing
@@ -258,7 +311,7 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                     if topk_ckpt_path is not None:
                         self.save_checkpoint(path=topk_ckpt_path)
                 # ========= eval end for this epoch ==========
-                self.model.train()
+                policy.train()
 
                 # end of epoch
                 # log of last step is combined with validation and rollout
@@ -267,14 +320,14 @@ class TrainRobomimicImageWorkspace(BaseWorkspace):
                 self.global_step += 1
                 self.epoch += 1
 
-
 @hydra.main(
     version_base=None,
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainRobomimicImageWorkspace(cfg)
+    workspace = TrainDiffusionUnetHybridWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":
     main()
+
