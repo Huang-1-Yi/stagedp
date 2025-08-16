@@ -1,9 +1,10 @@
+# 可用
 defaults:
   - _self_
-  - task: mimicgen_rel
+  - task: mimicgen_abs_224
 
-name: equi_diff
-_target_: diffusion_policy.workspace.robomimic.train_equi_workspace.TrainEquiWorkspace
+name: diff_c
+_target_: diffusion_policy.workspace.robomimic.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
 
 shape_meta: ${task.shape_meta}
 exp_name: "default"
@@ -16,11 +17,13 @@ n_action_steps: 8
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
-dataset: diffusion_policy.dataset.robomimic.replay_image_sym_dataset.RobomimicReplayImageSymDataset
-dataset_path: data/robomimic/datasets/${task_name}/${task_name}.hdf5
+obs_as_global_cond: True
+dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplayImageDataset
+dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs_224.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic.diffusion_equi_unet_cnn_enc_policy.DiffusionEquiUNetCNNEncPolicy
+  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
 
   shape_meta: ${shape_meta}
   
@@ -32,20 +35,23 @@ policy:
     beta_schedule: squaredcos_cap_v2
     variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
     clip_sample: True # required when predict_epsilon=False
+    # 根据self.noise_scheduler.config.prediction_type选择预测的目标类型。如果是epsilon，目标是噪声；如果是sample，目标是轨迹数据
     prediction_type: epsilon # or sample
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   num_inference_steps: 100
-  crop_shape: [76, 76]
+  obs_as_global_cond: ${obs_as_global_cond}
+  crop_shape: [216, 216] # ch, cw 240x240 90%
   # crop_shape: null
   diffusion_step_embed_dim: 128
-  enc_n_hidden: 128
   down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
+  obs_encoder_group_norm: True
+  eval_fixed_crop: True
   rot_aug: False
 
   # scheduler.step params
@@ -65,7 +71,6 @@ dataloader:
   shuffle: True
   pin_memory: True
   persistent_workers: True
-  drop_last: true
 
 val_dataloader:
   batch_size: 64 # 128
@@ -75,10 +80,11 @@ val_dataloader:
   persistent_workers: True
 
 optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
   betas: [0.95, 0.999]
-  eps: 1.0e-08
-  learning_rate: 0.0001
-  weight_decay: 1.0e-06
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
 
 training:
   device: "cuda:0"
@@ -112,7 +118,7 @@ logging:
   project: diffusion_policy_${task_name}
   resume: True
   mode: online
-  name: equidiff_demo${n_demo}
+  name: diff_c_demo${n_demo}
   tags: ["${name}", "${task_name}", "${exp_name}"]
   id: null
   group: null

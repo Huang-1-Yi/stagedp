@@ -17,6 +17,13 @@
     ```bash
     python diffusion_policy/scripts/dataset_states_to_obs_gpu.py --input data/robomimic/datasets/stack_d1/stack_d1.hdf5 --output data/robomimic/datasets/stack_d1/stack_d1_voxel.hdf5 --num_workers=32 
     ```
+    ```bash
+    python diffusion_policy/scripts/dataset_states_to_obs_gpu.py --input data/robomimic/datasets/stack_d1/stack_d1.hdf5 --output data/robomimic/datasets/stack_d1/stack_d1_224.hdf5 --camera_height 224 --camera_width 224 --num_workers=32 
+    ```
+3.  用强大cpu+gpu直接生成（如i9+4080）
+    ```bash
+    python diffusion_policy/scripts/dataset_states_to_obs_mp.py --dataset data/robomimic/datasets/stack_d1/stack_d1.hdf5 --output_name data/robomimic/datasets/stack_d1/stack_d1_224.hdf5 --camera_names agentview robot0_eye_in_hand --camera_height 224 --camera_width 224 --done_mode 2 --num_procs 16 --gpu_ids 0 --exclude_next_obs 
+    ```
 ### 原始dp的transformer（代码带“_gpu”默认用gpu加速）
 1.  转换stack_d1（非体素）
     ```bash
@@ -31,23 +38,23 @@
 仿真使用CUDA_VISIBLE_DEVICES=0有概率报错，可带前缀“MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa”
 1.  原始dp的unet的abs
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_abs task_name=stack_d1 n_demo=400
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_abs task_name=stack_d1 n_demo=100
     ```
 2. 原始dp的transformer的abs
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_transformer_abs task_name=stack_d1 n_demo=400
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_transformer_abs task_name=stack_d1 n_demo=100
     ```
 3. 原始dp的体素的abs
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_voxel_abs task_name=stack_d1 n_demo=400
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_dp_diffusion_unet_voxel_abs task_name=stack_d1 n_demo=100
     ```
 4.  eqdp的unet的abs
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_abs task_name=stack_d1 n_demo=400
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_abs task_name=stack_d1 n_demo=100
     ```
 5. eqdp的unet的rel
     ```bash
-    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_rel task_name=stack_d1 n_demo=400
+    HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_train_equi_diffusion_unet_rel task_name=stack_d1 n_demo=100
     ```
 ## 真实使用
 ### 原始dp的unet训练

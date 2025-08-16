@@ -10,7 +10,7 @@ shape_meta: ${task.shape_meta}
 exp_name: "default"
 
 task_name: stack_d1
-n_demo: 100 #400
+n_demo: 100 
 horizon: 10
 n_obs_steps: 2
 n_action_steps: 8
@@ -96,15 +96,18 @@ training:
   lr_scheduler: cosine
   # Transformer needs LR warmup
   lr_warmup_steps: 1000
-  num_epochs: ${eval:'50000 / ${n_demo}'}
+  # num_epochs: ${eval:'50000 / ${n_demo}'}
+  num_epochs: 600
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
   use_ema: True
   # training loop control
   # in epochs
-  rollout_every: ${eval:'1000 / ${n_demo}'}
-  checkpoint_every: ${eval:'1000 / ${n_demo}'}
+  # rollout_every: ${eval:'1000 / ${n_demo}'}
+  # checkpoint_every: ${eval:'1000 / ${n_demo}'}
+  rollout_every: 10
+  checkpoint_every: 10
   val_every: 1
   sample_every: 5
   # steps per epoch
