@@ -147,7 +147,7 @@ def get_mask_transform(
     h_slice = slice(h_slice_start, h_slice_start + oh)
 
     def transform(img: np.ndarray):
-        # 验证输入形状
+        # 验证输入mask的形状 
         assert img.ndim == 2, f"Mask应为单通道 (H,W)，实际维度为{img.ndim}"
         h, w = img.shape
         assert (h, w) == (ih, iw), f"输入尺寸应为高{ih}宽{iw}，实际为高{h}宽{w}"

@@ -1,0 +1,31 @@
+robomimic-0.5.0安装
+(equidiff) robot@robot:~/Downloads/robomimic-0.5.0$ pip install -e .
+python /home/robot/Downloads/robomimic-0.5.0/robomimic/scripts/setup_macros.py
+
+
+robosuite-1.5.1安装
+(equidiff) robot@robot:~/Downloads/robosuite-1.5.1$ pip install -r requirements.txt
+python /home/robot/Downloads/robosuite-1.5.1/robosuite/scripts/setup_macros.py
+
+
+sudo mkdir -p /opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/robosuite
+
+(equidiff) robot@robot:~/Downloads/robosuite-1.5.1$ sudo mkdir -p /opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/robosuite
+[sudo] robot 的密码： 
+(equidiff) robot@robot:~/Downloads/robosuite-1.5.1$ sudo ln -s /home/robot/Downloads/robosuite-1.5.1/robosuite/macros.py  /opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/robosuite/macros.py
+
+
+(equidiff) robot@robot:~/Downloads/robosuite-1.5.1$ python /home/robot/Downloads/robosuite-1.5.1/robosuite/scripts/setup_macros.py
+copied /opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/robosuite/macros.py
+to /opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/robosuite/macros_private.py
+
+(equidiff) robot@robot:~/Downloads/robosuite-1.5.1$ pip install -e .
+
+
+export PYTHONPATH=/home/robot/Downloads/robosuite-1.5.1:$PYTHONPATH
+export PYTHONPATH=/home/robot/Downloads/robomimic-0.5.0:$PYTHONPATH
+
+
+
+
+sudo ln -s /home/robot/Desktop/stagedp/data/robomimic  /home/robot/Downloads/equidiff-main/data/robomimic

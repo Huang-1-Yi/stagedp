@@ -1,3 +1,4 @@
+# 只生成单个相机的可视化图像
 from typing import List, Optional
 from matplotlib.pyplot import fill
 import numpy as np
@@ -15,7 +16,10 @@ class RobomimicImageWrapper(gym.Env):
         ):
 
         self.env = env
-        self.render_obs_keys = [render_obs_key] if isinstance(render_obs_key, str) else render_obs_key
+        # eqdp 单相机
+        self.render_obs_key = render_obs_key
+        # # ds
+        # self.render_obs_keys = [render_obs_key] if isinstance(render_obs_key, str) else render_obs_key
 
         self.init_state = init_state
         self.seed_state_map = dict()
@@ -40,6 +44,15 @@ class RobomimicImageWrapper(gym.Env):
             min_value, max_value = -1, 1
             if key.endswith('image'):
                 min_value, max_value = 0, 1
+            # eqdp
+            elif key.endswith('depth'):
+                min_value, max_value = 0, 1
+            elif key.endswith('voxels'):
+                min_value, max_value = 0, 1
+            elif key.endswith('point_cloud'):
+                min_value, max_value = -10, 10
+            # eqdp 截至
+
             elif key.endswith('quat'):
                 min_value, max_value = -1, 1
             elif key.endswith('qpos'):
@@ -63,10 +76,12 @@ class RobomimicImageWrapper(gym.Env):
     def get_observation(self, raw_obs=None):
         if raw_obs is None:
             raw_obs = self.env.get_observation()
-        
+        # # ds
+        # imgs = [raw_obs[key] for key in self.render_obs_keys]
+        # self.render_cache = np.concatenate(imgs, axis=1)
 
-        imgs = [raw_obs[key] for key in self.render_obs_keys]
-        self.render_cache = np.concatenate(imgs, axis=1)
+        # eqdp设置后仅支持单摄像头
+        self.render_cache = raw_obs[self.render_obs_key]
 
         obs = dict()
         for key in self.observation_space.keys():
