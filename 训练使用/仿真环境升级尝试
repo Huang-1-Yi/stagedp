@@ -8,6 +8,10 @@ git checkout 081f7dbbe5fff17b28c67ce8ec87c371f32526a9
 pip install -e .
 cd ../stagedp
 
+pip install diffusers==0.30.0
+
+
+可以使用了
 
 (base) robot@robot:~/Desktop/stagedp$ mamba env create -f conda_environment_sim.yaml
 

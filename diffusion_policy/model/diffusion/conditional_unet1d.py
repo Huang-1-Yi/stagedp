@@ -230,7 +230,7 @@ class ConditionalUnet1D(nn.Module):
                     cond_predict_scale=cond_predict_scale),
                 Upsample1d(dim_in) if not is_last else nn.Identity()    # 上采样操作
             ]))
-        
+
         # 最终输出层
         final_conv = nn.Sequential(
             Conv1dBlock(start_dim, start_dim, kernel_size=kernel_size),
@@ -251,7 +251,9 @@ class ConditionalUnet1D(nn.Module):
     def forward(self, 
             sample: torch.Tensor, 
             timestep: Union[torch.Tensor, float, int], 
-            local_cond=None, global_cond=None, **kwargs):
+            local_cond=None, 
+            global_cond=None, 
+            **kwargs):
         """
         x: (B,T,input_dim)
         timestep: (B,) or int, diffusion step
@@ -281,6 +283,7 @@ class ConditionalUnet1D(nn.Module):
             global_feature = torch.cat([global_feature, global_cond], axis=-1)# Step5：将时间步特征与其他全局条件（如观测特征）融合 [B, dsed + global_cond_dim]
             # 如果diffusion_step_encoder 的输出维度为 dsed（如 256），global_cond 的维度为 global_cond_dim（如 128）
             # 拼接后的 global_feature 维度为 dsed + global_cond_dim（如 384）。如果后续模块（如 ConditionalResidualBlock1D）的 cond_dim 参数设置为此值，则维度匹配
+        
         # encode local features
         # 编码局部条件（如历史动作）
         h_local = list()
@@ -290,8 +293,7 @@ class ConditionalUnet1D(nn.Module):
             # local_cond_encoder构成：
             # 下采样编码器 down encoder ConditionalResidualBlock1D
             # 上采样编码器 up encoder ConditionalResidualBlock1D
-            resnet, resnet2 = self.local_cond_encoder       
-
+            resnet, resnet2 = self.local_cond_encoder   # 局部条件编码器
             x = resnet(local_cond, global_feature)
             h_local.append(x)                           # 保存到列表供后续注入
             x = resnet2(local_cond, global_feature)
@@ -316,11 +318,16 @@ class ConditionalUnet1D(nn.Module):
         for idx, (resnet, resnet2, upsample) in enumerate(self.up_modules):
             x = torch.cat((x, h.pop()), dim=1)  # 拼接跳跃连接维度（通道维度）
             x = resnet(x, global_feature)                               # Step6：将global_feature输入残差块
+            # 在循环条件判断中，原本应该使用len(self.up_modules)-1（最后一个索引）来触发局部条件的注入，
+            # 但是为了兼容已经发布的模型（这些模型是在没有上采样部分注入局部条件的情况下训练的），
+            # 所以保留了一个永远不会触发的条件（即不注入）。这是一种为了兼容性的折中做法。
             # The correct condition should be:
+            # dp3考虑了这一点
             # if idx == (len(self.up_modules)-1) and len(h_local) > 0:
             # However this change will break compatibility with published checkpoints.
             # Therefore it is left as a comment.
             if idx == len(self.up_modules) and len(h_local) > 0:    # 最后一层注入局部条件
+            # 局部条件未正确注入上采样层​​，这会损害模型的条件生成能力
                 x = x + h_local[1]
             x = resnet2(x, global_feature)
             x = upsample(x)             # 上采样（ConvTranspose1d）   

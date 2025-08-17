@@ -63,6 +63,7 @@ policy:
   kernel_size: 5
   n_groups: 8
   # cond_predict_scale: True
+  # 三个参数都为true，若condition_type='film'，完全等效于dp的网络
   use_down_condition: true
   use_mid_condition: true
   use_up_condition: true

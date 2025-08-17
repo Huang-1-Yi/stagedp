@@ -61,3 +61,4 @@ dependencies:
     - robosuite-task-zoo  @ https://github.com/pointW/robosuite-task-zoo/archive/0f8a7b2fa5d192e4e8800bebfe8090b28926f3ed.tar.gz
 
     - atomics==1.0.2
+    # - diffusers==0.30.0

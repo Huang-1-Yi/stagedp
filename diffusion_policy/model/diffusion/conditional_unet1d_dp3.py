@@ -42,7 +42,6 @@ class CrossAttention(nn.Module):
     
 
 class ConditionalResidualBlock1D(nn.Module):
-
     def __init__(self,
                  in_channels,
                  out_channels,
