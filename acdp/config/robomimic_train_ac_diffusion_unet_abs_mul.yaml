@@ -4,7 +4,9 @@ defaults:
   - task: mimicgen_ac_abs
 
 name: diff_c
-_target_: diffusion_policy.workspace.robomimic.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
+# _target_: diffusion_policy.workspace.robomimic.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
+_target_: acdp.workspace.robomimic.train_acdp_unet_image_workspace.TrainDiffusionUnetImageWorkspace
+
 
 shape_meta: ${task.shape_meta}
 exp_name: "default"
@@ -22,8 +24,8 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
-  # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetImagePolicy
 
   shape_meta: ${shape_meta}
   
@@ -40,6 +42,20 @@ policy:
     steps_offset: 0
     prediction_type: epsilon # or sample
 
+  obs_encoder:
+    _target_: diffusion_policy.model.vision.dp_multi_image_obs_encoder.MultiImageObsEncoder
+    shape_meta: ${shape_meta}
+    rgb_model:
+      _target_: diffusion_policy.model.vision.model_getter.get_resnet
+      name: resnet18
+      weights: null
+    resize_shape: [240, 320]
+    crop_shape: [216, 288] # ch, cw 240x320 90%
+    random_crop: True
+    use_group_norm: True
+    share_rgb_model: False
+    imagenet_norm: True
+  
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
@@ -69,14 +85,14 @@ ema:
 
 dataloader:
   batch_size: 1 # 128
-  num_workers: 16
+  num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
   batch_size: 1 # 128
-  num_workers: 16
+  num_workers: 8
   shuffle: False
   pin_memory: True
   persistent_workers: True

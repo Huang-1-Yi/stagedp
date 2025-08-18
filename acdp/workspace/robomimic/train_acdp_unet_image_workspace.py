@@ -21,7 +21,11 @@ import tqdm
 import numpy as np
 import shutil
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy import DiffusionUnetHybridImagePolicy
+
+
+from acdp.policy.robomimic.diffusion_unet_hybrid_image_policy import DiffusionUnetImagePolicy
+
+
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.env_runner.base_image_runner import BaseImageRunner
 from diffusion_policy.common.checkpoint_util import TopKCheckpointManager
@@ -32,7 +36,7 @@ from diffusion_policy.model.common.lr_scheduler import get_scheduler
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
-class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
+class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
     include_keys = ['global_step', 'epoch']
 
     def __init__(self, cfg: OmegaConf, output_dir=None):
@@ -45,13 +49,12 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
         random.seed(seed)
 
         # configure model
-        self.model: DiffusionUnetHybridImagePolicy = hydra.utils.instantiate(cfg.policy)
+        self.model: DiffusionUnetImagePolicy = hydra.utils.instantiate(cfg.policy)
 
-        self.ema_model: DiffusionUnetHybridImagePolicy = None
+        self.ema_model: DiffusionUnetImagePolicy = None
         if cfg.training.use_ema:
             self.ema_model = copy.deepcopy(self.model)
 
-        # configure training state
         # 在transformer中，优化器的配置是由 get_optimizer 方法提供的
         # 而在unet中，优化器通过 hydra.utils.instantiate 来直接根据配置文件进行初始化，
         # 并显式传递了 params=self.model.parameters()。
@@ -82,8 +85,6 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
             if lastest_ckpt_path.is_file():
                 print(f"Resuming from checkpoint {lastest_ckpt_path}")
                 self.load_checkpoint(path=lastest_ckpt_path)
-                self.epoch += 1
-                self.global_step += 1
 
         # configure dataset
         dataset: BaseImageDataset
@@ -184,6 +185,11 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
             while self.epoch < cfg.training.num_epochs:
                 step_log = dict()
                 # ========= train for this epoch ==========
+                # # 没有这个参数
+                # if cfg.training.freeze_encoder:
+                #     self.model.obs_encoder.eval()
+                #     self.model.obs_encoder.requires_grad_(False)
+
                 train_losses = list()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}", 
                         leave=False, mininterval=cfg.training.tqdm_interval_sec) as tepoch:
@@ -242,14 +248,13 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                     policy = self.ema_model
                 policy.eval()
 
-                print("Running rollout...")
                 # run rollout
                 if (self.epoch % cfg.training.rollout_every) == 0:
+                    print("Running rollout...")
                     runner_log = env_runner.run(policy)
                     # log all
                     step_log.update(runner_log)
-                print("Rollout done.")
-                
+                    print("Rollout done.")
 
                 # run validation
                 if (self.epoch % cfg.training.val_every) == 0:
@@ -287,7 +292,6 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
                         del result
                         del pred_action
                         del mse
-                        # torch.cuda.empty_cache()
                 
                 # checkpoint
                 if (self.epoch % cfg.training.checkpoint_every) == 0:
@@ -325,9 +329,8 @@ class TrainDiffusionUnetHybridWorkspace(BaseWorkspace):
     config_path=str(pathlib.Path(__file__).parent.parent.joinpath("config")), 
     config_name=pathlib.Path(__file__).stem)
 def main(cfg):
-    workspace = TrainDiffusionUnetHybridWorkspace(cfg)
+    workspace = TrainDiffusionUnetImageWorkspace(cfg)
     workspace.run()
 
 if __name__ == "__main__":
     main()
-
