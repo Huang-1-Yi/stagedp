@@ -189,6 +189,14 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
 
         self.obs_encoder = obs_encoder
         self.model = model
+
+        # 添加特征稳定层
+        self.feature_stabilizer = nn.Sequential(
+            nn.LayerNorm(obs_feature_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+
         self.noise_scheduler = noise_scheduler
         self.mask_generator = LowdimMaskGenerator(
             action_dim=action_dim,
@@ -257,6 +265,10 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             model_output = model(trajectory, t, 
                 local_cond=local_cond, global_cond=global_cond)
 
+            if not torch.isfinite(model_output).all():
+                print(f"Timestep {t}: Model output contains NaN/Inf!")
+                model_output = torch.nan_to_num(model_output)  # 自动替换异常值
+
             # 3. compute previous image: x_t -> x_t-1
             # DPM-Solver++需使用scheduler.step的return_dict形式[7](@ref)
             trajectory = scheduler.step(
@@ -268,6 +280,11 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
+        
+        # 添加轨迹检查
+        if not torch.isfinite(trajectory).all():
+            print(f"Timestep {t}: Trajectory contains NaN/Inf!")
+            trajectory = torch.clamp(trajectory, -1e5, 1e5)  # 数值截断
 
         return trajectory
 
@@ -312,6 +329,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
         nobs_features = self.obs_encoder(this_nobs)
 
+        # 添加特征稳定处理
+        nobs_features = self.feature_stabilizer(nobs_features)
+        
         if self.obs_as_global_cond:
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)
@@ -395,12 +415,16 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             this_nobs = dict_apply(nobs, 
                 lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
+            # 添加特征稳定处理
+            nobs_features = self.feature_stabilizer(nobs_features)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(batch_size, -1)
         else:
             # reshape B, T, ... to B*T
             this_nobs = dict_apply(nobs, lambda x: x.reshape(-1, *x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)
+            # 添加特征稳定处理
+            nobs_features = self.feature_stabilizer(nobs_features)
             # reshape back to B, T, Do
             nobs_features = nobs_features.reshape(batch_size, horizon, -1)
             cond_data = torch.cat([nactions, nobs_features], dim=-1)
