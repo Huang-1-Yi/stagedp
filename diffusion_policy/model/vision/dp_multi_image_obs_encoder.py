@@ -80,7 +80,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
         Assumes low_dim input: B,D
         """
         super().__init__()
-
+        print("正在使用dp_multi_image_obs_encoder")
         # ========== 初始化存储结构 =============================================
         rgb_keys = list()                   # 存储所有RGB观测键（如'camera_0'）
         low_dim_keys = list()               # 存储低维观测键（如'robot_eef_pose'）

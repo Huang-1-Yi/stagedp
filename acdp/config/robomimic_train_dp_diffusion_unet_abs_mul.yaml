@@ -22,23 +22,36 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
   # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetImagePolicy
 
   shape_meta: ${shape_meta}
   
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
     num_train_timesteps: 100
     beta_start: 0.0001
     beta_end: 0.02
-    # beta_schedule is important
-    # this is the best we found
     beta_schedule: squaredcos_cap_v2
-    clip_sample: True
-    set_alpha_to_one: True
-    steps_offset: 0
+    variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
+    clip_sample: True # required when predict_epsilon=False
+    # 根据self.noise_scheduler.config.prediction_type选择预测的目标类型。如果是epsilon，目标是噪声；如果是sample，目标是轨迹数据
     prediction_type: epsilon # or sample
+
+  obs_encoder:
+    _target_: diffusion_policy.model.vision.dp_multi_image_obs_encoder.MultiImageObsEncoder
+    shape_meta: ${shape_meta}
+    rgb_model:
+      _target_: diffusion_policy.model.vision.model_getter.get_resnet
+      name: resnet18
+      weights: null
+    resize_shape: [240, 320]
+    crop_shape: [216, 288] # ch, cw 240x320 90%
+    random_crop: True
+    use_group_norm: True
+    share_rgb_model: False
+    imagenet_norm: True
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
@@ -48,13 +61,13 @@ policy:
   crop_shape: [76, 76]
   # crop_shape: null
   diffusion_step_embed_dim: 128
-  down_dims: [256, 512, 1024]
+  down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
   obs_encoder_group_norm: True
   eval_fixed_crop: True
-  rot_aug: False  # 设置是否随机裁减，这里是robomimic用的
+  rot_aug: False
 
   # scheduler.step params
   # predict_epsilon: True
@@ -68,14 +81,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 1 # 128
+  batch_size: 2 # 128
   num_workers: 16
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 8 # 128
+  batch_size: 2 # 128
   num_workers: 16
   shuffle: False
   pin_memory: True

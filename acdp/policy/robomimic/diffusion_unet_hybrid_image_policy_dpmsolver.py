@@ -1,17 +1,17 @@
-# 将原始基于bcrnn的编码器改为引用自己编写引入的编码器
+# 使用新的采样器
 from typing import Dict
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-
+# from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+# from diffusers.schedulers.scheduling_dpmsolver_multistep import DPMSolverMultistepScheduler
+from diffusers.schedulers.scheduling_dpmsolver_singlestep import DPMSolverSinglestepScheduler  # 新增
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 from diffusion_policy.model.diffusion.mask_generator import LowdimMaskGenerator
-from diffusion_policy.model.vision.dp_multi_image_obs_encoder import MultiImageObsEncoder
 from diffusion_policy.common.robomimic_config_util import get_robomimic_config
 from robomimic.algo import algo_factory
 from robomimic.algo.algo import PolicyAlgo
@@ -26,25 +26,25 @@ import diffusion_policy.model.vision.crop_randomizer as dmvc
 from diffusion_policy.common.pytorch_util import dict_apply, replace_submodules
 from diffusion_policy.model.vision.rot_randomizer import RotRandomizer
 
-class DiffusionUnetImagePolicy(BaseImagePolicy):
+
+class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
     def __init__(self, 
             shape_meta: dict,
-            noise_scheduler: DDPMScheduler,
-            obs_encoder: MultiImageObsEncoder,
+            noise_scheduler: DPMSolverSinglestepScheduler,
             horizon, 
             n_action_steps, 
             n_obs_steps,
             num_inference_steps=None,
             obs_as_global_cond=True,
-            crop_shape=(216, 216),
-            diffusion_step_embed_dim=256,   # 设置扩散步骤的嵌入维度，并传递给模型的初始化
+            crop_shape=(76, 76),
+            diffusion_step_embed_dim=256,# 设置扩散步骤的嵌入维度，并传递给模型的初始化
             down_dims=(256,512,1024),
             kernel_size=5,
             n_groups=8,
             cond_predict_scale=True,
             obs_encoder_group_norm=False,
             eval_fixed_crop=False,
-            rot_aug=False,                  # robomimic用的
+            rot_aug=False,
             # parameters passed to step
             **kwargs):
         """
@@ -65,20 +65,104 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         """
         super().__init__()
 
-        # 调试标志
-        self.debug = True
-        if self.debug:
-            print("\n" + "="*50)
-            print(f"{'Policy初始化维度信息':^50}")
-            print("="*50)
-            print(f"原始shape_meta: {shape_meta}")
+        # # 全局种子确保实验完全可复现
+        # def set_seed(seed=42):
+        #     import random, numpy as np, torch
+        #     random.seed(seed)
+        #     np.random.seed(seed)
+        #     torch.manual_seed(seed)
+        #     if torch.cuda.is_available():
+        #         torch.cuda.manual_seed_all(seed)
+        #     torch.backends.cudnn.deterministic = True  # 消除CUDA随机性 [6,8](@ref)
+
+        # # 仅固定 generator无法控制数据加载、模型初始化等随机源，在模型初始化后调用
+        # set_seed(42)  # 与generator种子一致
 
         # parse shape_meta
         action_shape = shape_meta['action']['shape']
         assert len(action_shape) == 1
         action_dim = action_shape[0]
-        # get feature dim
-        obs_feature_dim = obs_encoder.output_shape()[0]
+        obs_shape_meta = shape_meta['obs']
+        obs_config = {
+            'low_dim': [],
+            'rgb': [],
+            'depth': [],
+            'scan': []
+        }
+        obs_key_shapes = dict()
+        for key, attr in obs_shape_meta.items():
+            shape = attr['shape']
+            obs_key_shapes[key] = list(shape)
+
+            type = attr.get('type', 'low_dim')
+            if type == 'rgb':
+                obs_config['rgb'].append(key)
+            elif type == 'low_dim':
+                obs_config['low_dim'].append(key)
+            else:
+                raise RuntimeError(f"Unsupported obs type: {type}")
+
+        # get raw robomimic config
+        config = get_robomimic_config(
+            algo_name='bc_rnn',
+            hdf5_type='image',
+            task_name='square',
+            dataset_type='ph')
+        
+        with config.unlocked():
+            # set config with shape_meta
+            config.observation.modalities.obs = obs_config
+
+            if crop_shape is None:
+                for key, modality in config.observation.encoder.items():
+                    if modality.obs_randomizer_class == 'CropRandomizer':
+                        modality['obs_randomizer_class'] = None
+            else:
+                # set random crop parameter
+                ch, cw = crop_shape
+                for key, modality in config.observation.encoder.items():
+                    if modality.obs_randomizer_class == 'CropRandomizer':
+                        modality.obs_randomizer_kwargs.crop_height = ch
+                        modality.obs_randomizer_kwargs.crop_width = cw
+
+        # init global state
+        ObsUtils.initialize_obs_utils_with_config(config)
+
+        # load model
+        policy: PolicyAlgo = algo_factory(
+                algo_name=config.algo_name,
+                config=config,
+                obs_key_shapes=obs_key_shapes,
+                ac_dim=action_dim,
+                device='cpu',
+            )
+
+        obs_encoder = policy.nets['policy'].nets['encoder'].nets['obs']
+        
+        if obs_encoder_group_norm:
+            # replace batch norm with group norm
+            replace_submodules(
+                root_module=obs_encoder,
+                predicate=lambda x: isinstance(x, nn.BatchNorm2d),
+                func=lambda x: nn.GroupNorm(
+                    num_groups=x.num_features//16, 
+                    num_channels=x.num_features)
+            )
+            # obs_encoder.obs_nets['agentview_image'].nets[0].nets
+        
+        # obs_encoder.obs_randomizers['agentview_image']
+        if eval_fixed_crop:
+            replace_submodules(
+                root_module=obs_encoder,
+                predicate=lambda x: isinstance(x, rmbn.CropRandomizer),
+                func=lambda x: dmvc.CropRandomizer(
+                    input_shape=x.input_shape,
+                    crop_height=x.crop_height,
+                    crop_width=x.crop_width,
+                    num_crops=x.num_crops,
+                    pos_enc=x.pos_enc
+                )
+            )
 
         # create diffusion model
         obs_feature_dim = obs_encoder.output_shape()[0]
@@ -91,14 +175,6 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             # obs_as_global_cond如果为 False，将观察特征和动作特征结合作为输入
             input_dim = action_dim
             global_cond_dim = obs_feature_dim * n_obs_steps
-
-        # 添加特征维度输出
-        if self.debug:
-            print(f"观测特征维度 obs_feature_dim: {obs_feature_dim}")
-            print(f"动作维度 action_dim: {action_dim}")
-            print(f"全局条件维度 global_cond_dim: {global_cond_dim if obs_as_global_cond else 'N/A'}")
-            print(f"输入维度 input_dim: {input_dim}")
-            print("-"*50 + "\n")
 
         model = ConditionalUnet1D(
             input_dim=input_dim,
@@ -130,13 +206,13 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         self.n_action_steps = n_action_steps
         self.n_obs_steps = n_obs_steps
         self.obs_as_global_cond = obs_as_global_cond
-        self.rot_aug = rot_aug # robomimic用的
+        self.rot_aug = rot_aug
         self.kwargs = kwargs
 
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
-        
+
         print("Diffusion params: %e" % sum(p.numel() for p in self.model.parameters()))
         print("Vision params: %e" % sum(p.numel() for p in self.obs_encoder.parameters()))
     
@@ -172,20 +248,22 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # set step values
         scheduler.set_timesteps(self.num_inference_steps)
 
+        # 修改采样循环（原始 DPM-Solver 需要不同的处理）
         for t in scheduler.timesteps:
-            # 1. apply conditioning
+            # 1. 应用条件
             trajectory[condition_mask] = condition_data[condition_mask]
 
-            # 2. predict model output
+            # 2. 预测模型输出
             model_output = model(trajectory, t, 
                 local_cond=local_cond, global_cond=global_cond)
 
-            # 3. compute previous image: x_t -> x_t-1
+            # 3. DPM-Solver 单步更新 (接口不同)
             trajectory = scheduler.step(
-                model_output, t, trajectory, 
-                generator=generator,
-                **kwargs
-                ).prev_sample
+                model_output, 
+                t, 
+                trajectory, 
+                generator=generator
+            ).prev_sample  # 不需要 return_dict
         
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]        
@@ -221,23 +299,25 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # build input
         device = self.device
         dtype = self.dtype
+        # dpm_solver对随机性敏感
+        generator = torch.Generator(device=device).manual_seed(42)
 
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
+
+        # 提炼出来，虽然本身是一个条件采样，但实现代码一致
+        # condition through global feature 或者 condition through impainting
+        this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
+        nobs_features = self.obs_encoder(this_nobs)
+
         if self.obs_as_global_cond:
-            # condition through global feature
-            this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, Do
             global_cond = nobs_features.reshape(B, -1)
             # empty data for action
             cond_data = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
             cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
         else:
-            # condition through impainting
-            this_nobs = dict_apply(nobs, lambda x: x[:,:To,...].reshape(-1,*x.shape[2:]))
-            nobs_features = self.obs_encoder(this_nobs)
             # reshape back to B, To, Do
             nobs_features = nobs_features.reshape(B, To, -1)
             cond_data = torch.zeros(size=(B, T, Da+Do), device=device, dtype=dtype)
@@ -251,6 +331,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             cond_mask,
             local_cond=local_cond,
             global_cond=global_cond,
+            generator=generator,  # 传入固定生成器
             **self.kwargs)
         
         # unnormalize prediction
@@ -298,23 +379,11 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         assert 'valid_mask' not in batch
         nobs = self.normalizer.normalize(batch['obs'])
         nactions = self.normalizer['action'].normalize(batch['action'])
-        if self.rot_aug:    # robomimic用的
+        if self.rot_aug:
             nobs, nactions = self.rot_randomizer(nobs, nactions)
         batch_size = nactions.shape[0]
         horizon = nactions.shape[1]
 
-        # # Step 5: 训练输入维度
-        # if self.debug:
-        #     print("\n" + "="*50)
-        #     print(f"{'训练阶段输入维度':^50}")
-        #     print("="*50)
-        #     print(f"批量大小: {batch_size}")
-        #     print(f"时间长度: {horizon}")
-        #     print(f"观测数据形状:")
-        #     for k, v in nobs.items():
-        #         print(f"  {k}: {tuple(v.shape)}")
-        #     print(f"动作数据形状: {tuple(nactions.shape)}")
-        
         # handle different ways of passing observation
         local_cond = None
         global_cond = None
@@ -339,32 +408,14 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # generate impainting mask
         condition_mask = self.mask_generator(trajectory.shape)
 
-
-        # # Step 6: 特征编码维度
-        # if self.debug:
-        #     print("\n" + "-"*50)
-        #     print(f"特征编码输出:")
-        #     if self.obs_as_global_cond:
-        #         print(f"  全局条件形状: {tuple(global_cond.shape)}")
-        #     else:
-        #         print(f"  条件数据形状: {tuple(cond_data.shape)}")
-        #     print(f"  掩码形状: {tuple(condition_mask.shape)}")
-        
         # Sample noise that we'll add to the images
         noise = torch.randn(trajectory.shape, device=trajectory.device)
-
         bsz = trajectory.shape[0]
         # Sample a random timestep for each image
         timesteps = torch.randint(
             0, self.noise_scheduler.config.num_train_timesteps, 
             (bsz,), device=trajectory.device
         ).long()
-
-        # if self.debug:
-        #     print(f"\n噪声形状: {tuple(noise.shape)}")
-        #     print(f"时间步形状: {tuple(timesteps.shape)}")
-        
-
         # Add noise to the clean images according to the noise magnitude at each timestep
         # (this is the forward diffusion process)
         noisy_trajectory = self.noise_scheduler.add_noise(
@@ -373,28 +424,12 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
         # compute loss mask
         loss_mask = ~condition_mask
 
-        # if self.debug:
-        #     print(f"噪声轨迹形状: {tuple(noisy_trajectory.shape)}")
-        #     print(f"损失掩码形状: {tuple(loss_mask.shape)}")
-        
         # apply conditioning
         noisy_trajectory[condition_mask] = cond_data[condition_mask]
         
         # Predict the noise residual
         pred = self.model(noisy_trajectory, timesteps, 
             local_cond=local_cond, global_cond=global_cond)
-
-        # # Step 8: 模型前向传播维度
-        # if self.debug:
-        #     print("\n" + "-"*50)
-        #     print(f"模型输入:")
-        #     print(f"  噪声轨迹: {tuple(noisy_trajectory.shape)}")
-        #     print(f"  时间步: {tuple(timesteps.shape)}")
-        #     print(f"  本地条件: {tuple(local_cond.shape) if local_cond is not None else 'N/A'}")
-        #     print(f"  全局条件: {tuple(global_cond.shape) if global_cond is not None else 'N/A'}")
-        #     print(f"模型输出形状: {tuple(pred.shape)}")
-        
-
 
         pred_type = self.noise_scheduler.config.prediction_type 
         if pred_type == 'epsilon':
@@ -405,16 +440,7 @@ class DiffusionUnetImagePolicy(BaseImagePolicy):
             raise ValueError(f"Unsupported prediction type {pred_type}")
 
         loss = F.mse_loss(pred, target, reduction='none')
-
-        # # Step 9: 损失计算维度
-        # if self.debug:
-        #     print(f"\n目标形状: {tuple(target.shape)}")
-        #     print(f"损失掩码应用前形状: {tuple(loss.shape)}")
-        
         loss = loss * loss_mask.type(loss.dtype)
         loss = reduce(loss, 'b ... -> b (...)', 'mean')
         loss = loss.mean()
-        # if self.debug:
-        #     print(f"最终损失标量值: {loss.item():.4f}")
-        #     print("="*50 + "\n")
         return loss

@@ -1,7 +1,9 @@
 # 可用
 defaults:
   - _self_
+  # - task: mimicgen_abs
   - task: mimicgen_ac_abs
+
 
 name: diff_c
 _target_: diffusion_policy.workspace.robomimic.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
@@ -22,39 +24,56 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
-  # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver.DiffusionUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
+
+  # # 修改前（DPM-Solver++多步版）
+  # noise_scheduler:
+  #   _target_: diffusers.schedulers.scheduling_dpmsolver_multistep.DPMSolverMultistepScheduler
+  #   algorithm_type: "dpmsolver++"   # 指定DPM-Solver++算法[6,7](@ref)
+  #   solver_order: 2                 # 二阶求解（平衡速度与质量）
+  #   thresholding: True              # 启用动态阈值截断防止失真（提升稳定性）[1](@ref)
+  #   beta_schedule: squaredcos_cap_v2  # 保持与DDIM一致的噪声计划
+  #   beta_start: 0.0001
+  #   beta_end: 0.02
+  #   num_train_timesteps: 20         # 训练步数压缩至20步（原100步）
+  #   prediction_type: epsilon        # 需与模型预测类型匹配：与模型输出噪声残差匹配
   
+  # 修改后（DPM-Solver++单步版）
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
-    num_train_timesteps: 100
+    # 修改调度器类型为 DPM-Solver++
+    _target_: diffusers.schedulers.scheduling_dpmsolver_singlestep.DPMSolverSinglestepScheduler
+    algorithm_type: "dpmsolver"   # 改为原始 DPM-Solver 算法
+    solver_order: 2               # 保持二阶求解
+    # 移除阈值截断参数（原始 DPM-Solver 不支持）
+    beta_schedule: squaredcos_cap_v2
     beta_start: 0.0001
     beta_end: 0.02
-    # beta_schedule is important
-    # this is the best we found
-    beta_schedule: squaredcos_cap_v2
-    clip_sample: True
-    set_alpha_to_one: True
-    steps_offset: 0
-    prediction_type: epsilon # or sample
+    num_train_timesteps: 30
+    prediction_type: epsilon
+    # 添加原始 DPM-Solver 特定参数
+    thresholding: False            # 禁用动态阈值
+    lower_order_final: True        # 最后几步降阶提升稳定性
+
+
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 100
+  num_inference_steps: 30
   obs_as_global_cond: ${obs_as_global_cond}
   crop_shape: [76, 76]
   # crop_shape: null
   diffusion_step_embed_dim: 128
-  down_dims: [256, 512, 1024]
+  down_dims: [512, 1024, 2048]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
   obs_encoder_group_norm: True
   eval_fixed_crop: True
-  rot_aug: False  # 设置是否随机裁减，这里是robomimic用的
+  rot_aug: False
 
   # scheduler.step params
   # predict_epsilon: True
@@ -75,7 +94,7 @@ dataloader:
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 8 # 128
+  batch_size: 1 # 128
   num_workers: 16
   shuffle: False
   pin_memory: True
