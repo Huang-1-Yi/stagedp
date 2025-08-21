@@ -24,42 +24,52 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
-  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++.DiffusionUnetHybridImagePolicy
+  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  # _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++.DiffusionUnetHybridImagePolicy
+  # _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++1.DiffusionUnetImagePolicy
+  # _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++2.DiffusionUnetHybridImagePolicy
+  # _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver0821.DiffusionUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
   
+  # 修改后（DPM-Solver++多步版）
   # noise_scheduler:
-  #   _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
-  #   num_train_timesteps: 100
+  #   _target_: diffusers.schedulers.scheduling_dpmsolver_multistep.DPMSolverMultistepScheduler
+  #   algorithm_type: "dpmsolver++"   # 指定DPM-Solver++算法[6,7](@ref)
+  #   solver_order: 2                 # 二阶求解（平衡速度与质量）
+  #   thresholding: True              # 启用动态阈值截断防止失真（提升稳定性）[1](@ref)
+  #   beta_schedule: squaredcos_cap_v2  # 保持与DDIM一致的噪声计划
   #   beta_start: 0.0001
   #   beta_end: 0.02
-  #   # beta_schedule is important
-  #   # this is the best we found
-  #   beta_schedule: squaredcos_cap_v2
-  #   clip_sample: True
-  #   set_alpha_to_one: True
-  #   steps_offset: 0
-  #   prediction_type: epsilon # or sample
+  #   num_train_timesteps: 20         # 训练步数压缩至20步（原100步）
+  #   prediction_type: epsilon        # 需与模型预测类型匹配：与模型输出噪声残差匹配
 
-  # 修改后（DPM-Solver++多步版）
   noise_scheduler:
     _target_: diffusers.schedulers.scheduling_dpmsolver_multistep.DPMSolverMultistepScheduler
-    algorithm_type: "dpmsolver++"   # 指定DPM-Solver++算法[6,7](@ref)
-    solver_type: "midpoint"         # 或者 "heun"
-    solver_order: 2                 # 二阶求解（平衡速度与质量）
-    thresholding: True              # 启用动态阈值截断防止失真（提升稳定性
-    dynamic_thresholding_ratio: 0.995
-      # 注意：DPMSolverMultistepScheduler 没有 variance_type 参数
-    # 它使用固定的方差类型
-    # beta_schedule: squaredcos_cap_v2  # 保持与DDIM一致的噪声计划
-    beta_schedule: "linear" # 或 "scaled_linear", "squaredcos_cap_v2" 等，需与训练匹配
+    algorithm_type: dpmsolver++
+    num_train_timesteps: 20
     beta_start: 0.0001
     beta_end: 0.02
-    num_train_timesteps: 20         # 训练步数压缩至20步（原100步）
-    prediction_type: epsilon        # 需与模型预测类型匹配：与模型输出噪声残差匹配
+    beta_schedule: squaredcos_cap_v2
+    solver_type: midpoint  # 或者 "heun"
     lower_order_final: True
-    sample_max_value: 1.0
+    # 注意：DPMSolverMultistepScheduler 没有 variance_type 参数
+    # 它使用固定的方差类型
+    prediction_type: epsilon  # 与您之前使用的相同
+
+  # obs_encoder:
+  #   _target_: diffusion_policy.model.vision.dp_multi_image_obs_encoder.MultiImageObsEncoder
+  #   shape_meta: ${shape_meta}
+  #   rgb_model:
+  #     _target_: diffusion_policy.model.vision.model_getter.get_resnet
+  #     name: resnet18
+  #     weights: null
+  #   resize_shape: [240, 320]
+  #   crop_shape: [216, 288] # ch, cw 240x320 90%
+  #   random_crop: True
+  #   use_group_norm: True
+  #   share_rgb_model: False
+  #   imagenet_norm: True
 
 
   horizon: ${horizon}
@@ -90,14 +100,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 16 # 128
+  batch_size: 64 # 128
   num_workers: 16
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 16 # 128
+  batch_size: 64 # 128
   num_workers: 16
   shuffle: False
   pin_memory: True

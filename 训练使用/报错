@@ -1,0 +1,88 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++2.DiffusionUnetHybridImagePolicy
+
+Eval Stack_D1Image 1/2:   0%|                                                             | 0/400 [00:00<?, ?it/s]/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/diffusers/configuration_utils.py:140: FutureWarning: Accessing config attribute `algorithm_type` directly via 'DPMSolverMultistepScheduler' object attribute is deprecated. Please access 'algorithm_type' over 'DPMSolverMultistepScheduler's config object instead, e.g. 'scheduler.config.algorithm_type'.
+  deprecate("direct config name access", "1.0.0", deprecation_message, standard_warn=False)
+Error executing job with overrides: ['task_name=stack_d1', 'n_demo=200']
+Traceback (most recent call last):
+  File "/home/hy/Desktop/stagedp/train_sim.py", line 68, in <module>
+    main()
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/main.py", line 90, in decorated_main
+    _run_hydra(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 389, in _run_hydra
+    _run_app(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 452, in _run_app
+    run_and_report(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 216, in run_and_report
+    raise ex
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 213, in run_and_report
+    return func()
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 453, in <lambda>
+    lambda: hydra.run(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/hydra.py", line 132, in run
+    _ = ret.return_value
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/core/utils.py", line 260, in return_value
+    raise self._return_value
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "/home/hy/Desktop/stagedp/train_sim.py", line 65, in main
+    workspace.run()
+  File "/home/hy/Desktop/stagedp/diffusion_policy/workspace/robomimic/train_diffusion_unet_hybrid_workspace.py", line 248, in run
+    runner_log = env_runner.run(policy)
+  File "/home/hy/Desktop/stagedp/diffusion_policy/env_runner/robomimic_image_runner.py", line 294, in run
+    action_dict = policy.predict_action(obs_dict)
+  File "/home/hy/Desktop/stagedp/acdp/policy/robomimic/diffusion_unet_hybrid_image_policy_dpmsolver++2.py", line 313, in predict_action
+    nsample = self.conditional_sample(
+  File "/home/hy/Desktop/stagedp/acdp/policy/robomimic/diffusion_unet_hybrid_image_policy_dpmsolver++2.py", line 252, in conditional_sample
+    step_result = scheduler.step(
+TypeError: step() got an unexpected keyword argument 'model_outputs'
+Traceback (most recent call last):
+  File "/home/hy/Desktop/stagedp/train_sim.py", line 68, in <module>
+    main()
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/main.py", line 90, in decorated_main
+    _run_hydra(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 389, in _run_hydra
+    _run_app(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 452, in _run_app
+    run_and_report(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 216, in run_and_report
+    raise ex
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 213, in run_and_report
+    return func()
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/utils.py", line 453, in <lambda>
+    lambda: hydra.run(
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/_internal/hydra.py", line 132, in run
+    _ = ret.return_value
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/core/utils.py", line 260, in return_value
+    raise self._return_value
+  File "/opt/miniconda3/envs/equidiff/lib/python3.9/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "/home/hy/Desktop/stagedp/train_sim.py", line 65, in main
+    workspace.run()
+  File "/home/hy/Desktop/stagedp/diffusion_policy/workspace/robomimic/train_diffusion_unet_hybrid_workspace.py", line 248, in run
+    runner_log = env_runner.run(policy)
+  File "/home/hy/Desktop/stagedp/diffusion_policy/env_runner/robomimic_image_runner.py", line 294, in run
+    action_dict = policy.predict_action(obs_dict)
+  File "/home/hy/Desktop/stagedp/acdp/policy/robomimic/diffusion_unet_hybrid_image_policy_dpmsolver++2.py", line 313, in predict_action
+    nsample = self.conditional_sample(
+  File "/home/hy/Desktop/stagedp/acdp/policy/robomimic/diffusion_unet_hybrid_image_policy_dpmsolver++2.py", line 252, in conditional_sample
+    step_result = scheduler.step(
+TypeError: step() got an unexpected keyword argument 'model_outputs'
