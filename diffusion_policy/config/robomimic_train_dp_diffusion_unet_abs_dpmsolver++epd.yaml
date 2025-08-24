@@ -24,30 +24,23 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver0821.DiffusionUnetHybridImagePolicy
+  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver0821.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver_epd.DiffusionUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
   
   # 修改后（DPM-Solver++多步版）
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_dpmsolver_multistep.DPMSolverMultistepScheduler
-    algorithm_type: dpmsolver++       # 指定DPM-Solver++算法
-    num_train_timesteps: 100          # 训练步数100步，推理步压缩至20步
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
+    num_train_timesteps: 100
     beta_start: 0.0001
     beta_end: 0.02
-    beta_schedule: squaredcos_cap_v2  # 保持与DDIM一致的噪声计划
-    solver_type: midpoint
-    solver_order: 2                   # 显式添加二阶求解器（平衡速度与质量）
-    lower_order_final: True
-    prediction_type: epsilon
-    
-    # 推荐添加的质量提升参数
-    use_karras_sigmas: True  # 启用Karras噪声调度
-    rescale_betas_zero_snr: True  # 零终端SNR
-    
-    # 其他可选参数
-    thresholding: False  # 显式禁用动态阈值   # 启用动态阈值截断是为了防止失真（提升稳定性）
-    final_sigmas_type: "zero"  # 显式设置最终噪声为零
+    beta_schedule: squaredcos_cap_v2
+    variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
+    clip_sample: True # required when predict_epsilon=False
+    # 根据self.noise_scheduler.config.prediction_type选择预测的目标类型。如果是epsilon，目标是噪声；如果是sample，目标是轨迹数据
+    prediction_type: epsilon # or sample
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
