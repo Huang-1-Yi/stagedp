@@ -26,7 +26,7 @@ dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 policy:
   # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
   # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver0821.DiffusionUnetHybridImagePolicy
-  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver_epd_zxr.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++_zxr_1.DiffusionUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
   

@@ -1,9 +1,7 @@
 # 可用
 defaults:
   - _self_
-  - task: mimicgen_abs
-  # - task: mimicgen_ac_abs
-
+  - task: mimicgen_abs_224
 
 name: diff_c
 _target_: diffusion_policy.workspace.robomimic.train_diffusion_unet_hybrid_workspace.TrainDiffusionUnetHybridWorkspace
@@ -21,16 +19,14 @@ dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
 obs_as_global_cond: True
 dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplayImageDataset
-dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
+dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs_224.hdf5
 
 policy:
-  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
-  # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver0821.DiffusionUnetHybridImagePolicy
-  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver_epd_zxr.DiffusionUnetHybridImagePolicy
+  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
 
   shape_meta: ${shape_meta}
   
-  # 修改后（DPM-Solver++多步版）
   noise_scheduler:
     _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
     num_train_timesteps: 100
@@ -40,14 +36,16 @@ policy:
     variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
     clip_sample: True # required when predict_epsilon=False
     # 根据self.noise_scheduler.config.prediction_type选择预测的目标类型。如果是epsilon，目标是噪声；如果是sample，目标是轨迹数据
-    prediction_type: sample  # or sample epsilon
+    prediction_type: sample # or sample
+
+
 
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 20
+  num_inference_steps: 100
   obs_as_global_cond: ${obs_as_global_cond}
-  crop_shape: [76, 76]
+  crop_shape: [216, 216]
   # crop_shape: null
   diffusion_step_embed_dim: 128
   down_dims: [512, 1024, 2048]

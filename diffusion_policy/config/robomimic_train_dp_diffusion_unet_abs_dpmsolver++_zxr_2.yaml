@@ -26,7 +26,7 @@ dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 policy:
   # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
   # _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver0821.DiffusionUnetHybridImagePolicy
-  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver_epd_zxr.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dpmsolver++_zxr_1.DiffusionUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
   
@@ -45,7 +45,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 20
+  num_inference_steps: 10
   obs_as_global_cond: ${obs_as_global_cond}
   crop_shape: [76, 76]
   # crop_shape: null
@@ -91,7 +91,7 @@ optimizer:
   weight_decay: 1.0e-6
 
 training:
-  device: "cuda:0"
+  device: "cuda:1"
   seed: 42
   debug: False
   resume: True
