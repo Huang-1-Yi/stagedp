@@ -43,15 +43,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             obs_encoder_group_norm=False,
             eval_fixed_crop=False,
             rot_aug=False,
-            eps_scaler=0.99,  # 添加这行
             # parameters passed to step
             **kwargs):
         super().__init__()
-        
-        print("测试时的eps_scaler==", eps_scaler,"\n")
-
-        # 将 eps_scaler 添加到 kwargs 中
-        kwargs['eps_scaler'] = eps_scaler
 
         # parse shape_meta
         action_shape = shape_meta['action']['shape']
@@ -205,12 +199,9 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             sigma_max=80, 
             schedule_type='time_uniform', 
             schedule_rho=7, 
-            afs=False, 
             denoise_to_zero=False, 
             return_inters=False, 
-            inner_steps=2,  # New parameter for the number of inner steps
             r=0.5,
-            eps_scaler=1.0,  # 添加 Epsilon Scaling 参数
             # keyword arguments to scheduler.step
             **kwargs
             ):
@@ -246,62 +237,28 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         x_list = []
         x_list.append(x_next)
 
-        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):  # 0, ..., N-1
-            
+        for i, (t_c, t_n) in enumerate(zip(t_steps[:-1], t_steps[1:])):
+            # slope at t_c
+            x0_hat_c = model(x_next, t_c, local_cond=local_cond, global_cond=global_cond)
+            x0_hat_c[condition_mask] = condition_data[condition_mask]
+            d_cur = (x_next - x0_hat_c) / t_c
+            # stage & predict
+            x_pred = x_next + (t_n - t_c) * d_cur
+            # slope at stage
+            x0_hat_n = model(x_pred, t_n, local_cond=local_cond, global_cond=global_cond)
+            x0_hat_n[condition_mask] = condition_data[condition_mask]
+            d_prime = (x_pred - x0_hat_n) / t_n
+            # compose
+            x_next = x_next + (t_n - t_c) * (0.5 * d_cur + 0.5 * d_prime)
 
-            x_cur = x_next
-            # Compute the inner step size
-            t_s = get_schedule(inner_steps, t_next, t_cur, device=x_cur.device, schedule_type='polynomial', schedule_rho=7)
-            for i, (t_c, t_n) in enumerate(zip(t_s[:-1],t_s[1:])):
-                # Euler step.
-                use_afs = (afs and i == 0)
-                if use_afs:
-                    d_cur = x_cur / ((1 + t_c**2).sqrt())
-                else:
-                    # denoised = get_denoised(net, x_cur, t_c, class_labels=class_labels, condition=condition, unconditional_condition=unconditional_condition)
-                    denoised = model(x_cur, t_c, local_cond=local_cond, global_cond=global_cond)
-                    
-                    # 添加 Epsilon Scaling
-                    if eps_scaler != 1.0:
-                        pred_eps = (x_cur - denoised) / t_c
-                        pred_eps = pred_eps / eps_scaler
-                        denoised = x_cur - pred_eps * t_c
-                    
-                    denoised[condition_mask] = condition_data[condition_mask]
-                    d_cur = (x_cur - denoised) / t_c
-                x_next = x_cur + (t_n - t_c) * d_cur
-
-                # Apply 2nd order correction.
-                # denoised = get_denoised(net, x_next, t_n, class_labels=class_labels, condition=condition, unconditional_condition=unconditional_condition)
-                denoised = model(x_next, t_n, local_cond=local_cond, global_cond=global_cond)
-
-                # 添加 Epsilon Scaling
-                if eps_scaler != 1.0:
-                    pred_eps = (x_next - denoised) / t_n
-                    pred_eps = pred_eps / eps_scaler
-                    denoised = x_next - pred_eps * t_n
-                
-                denoised[condition_mask] = condition_data[condition_mask]
-                
-                d_prime = (x_next - denoised) / t_n
-                x_cur = x_cur + (t_n - t_c) * (0.5 * d_cur + 0.5 * d_prime)
-            
-            x_next = x_cur
             x_list.append(x_next)
 
             if return_inters:
-                inters.append(x_cur.unsqueeze(0))
+                inters.append(x_next.unsqueeze(0))
 
         if denoise_to_zero:
             # x_next = get_denoised(net, x_next, t_next, class_labels=class_labels, condition=condition, unconditional_condition=unconditional_condition)
-            x_next = model(x_next, t_next, local_cond=local_cond, global_cond=global_cond)
-
-            # 添加 Epsilon Scaling
-            if eps_scaler != 1.0:
-                pred_eps = (x_next - denoised) / t_next
-                pred_eps = pred_eps / eps_scaler
-                denoised = x_next - pred_eps * t_next
-
+            x_next = model(x_next, t_n, local_cond=local_cond, global_cond=global_cond)
             x_next[condition_mask] = condition_data[condition_mask]   
             if return_inters:
                 inters.append(x_next.unsqueeze(0))
@@ -371,7 +328,6 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             cond_mask,
             local_cond=local_cond,
             global_cond=global_cond,
-            # eps_scaler=self.kwargs.get('eps_scaler', 1.0),  # 添加这行
             **self.kwargs)
         
         # unnormalize prediction

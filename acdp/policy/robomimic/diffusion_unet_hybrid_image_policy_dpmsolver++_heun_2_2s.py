@@ -247,8 +247,6 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         x_list.append(x_next)
 
         for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):  # 0, ..., N-1
-            
-
             x_cur = x_next
             # Compute the inner step size
             t_s = get_schedule(inner_steps, t_next, t_cur, device=x_cur.device, schedule_type='polynomial', schedule_rho=7)
