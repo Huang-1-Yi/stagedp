@@ -27,6 +27,7 @@ max_steps = {
     'nut_assembly_d0': 500,
     'pick_place_d0': 1000,
     'coffee_preparation_d1': 800,
+    'coffee_preparation_d0': 800,
     'tool_hang': 700,
     'can': 400,
     'lift': 400,
