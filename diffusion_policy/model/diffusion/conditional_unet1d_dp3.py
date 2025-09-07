@@ -42,6 +42,7 @@ class CrossAttention(nn.Module):
     
 
 class ConditionalResidualBlock1D(nn.Module):
+
     def __init__(self,
                  in_channels,
                  out_channels,
@@ -144,7 +145,21 @@ class ConditionalResidualBlock1D(nn.Module):
         out = out + self.residual_conv(x)
         return out
 
-
+'''
+model = ConditionalUnet1D(
+    input_dim=input_dim,
+    local_cond_dim=None,
+    global_cond_dim=global_cond_dim,
+    diffusion_step_embed_dim=diffusion_step_embed_dim,
+    down_dims=down_dims,
+    kernel_size=kernel_size,
+    n_groups=n_groups,
+    condition_type=condition_type,
+    use_down_condition=use_down_condition,
+    use_mid_condition=use_mid_condition,
+    use_up_condition=use_up_condition,
+)
+'''
 class ConditionalUnet1D(nn.Module):
     def __init__(self, 
         input_dim,
@@ -284,7 +299,7 @@ class ConditionalUnet1D(nn.Module):
 
         timestep_embed = self.diffusion_step_encoder(timesteps)
         if global_cond is not None:
-            if self.condition_type == 'cross_attention':
+            if "cross_attention" in self.condition_type:
                 timestep_embed = timestep_embed.unsqueeze(1).expand(-1, global_cond.shape[1], -1)
             global_feature = torch.cat([timestep_embed, global_cond], axis=-1)
 
@@ -336,7 +351,6 @@ class ConditionalUnet1D(nn.Module):
                     x = x + h_local[1]
                 x = resnet2(x)
             x = upsample(x)
-
 
         x = self.final_conv(x)
 

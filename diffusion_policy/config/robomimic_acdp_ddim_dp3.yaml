@@ -21,8 +21,11 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_dp3.DiffusionUnetHybridImagePolicy
   # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
+  use_down_condition: true
+  use_mid_condition: true
+  use_up_condition: true
 
   shape_meta: ${shape_meta}
   
@@ -44,7 +47,7 @@ policy:
   horizon: ${horizon}
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
-  num_inference_steps: 20
+  num_inference_steps: 10
   obs_as_global_cond: ${obs_as_global_cond}
   crop_shape: [76, 76]
   # crop_shape: null
@@ -52,6 +55,9 @@ policy:
   down_dims: [256, 512, 1024]
   kernel_size: 5
   n_groups: 8
+
+  condition_type: cross_attention_film
+
   cond_predict_scale: True
   obs_encoder_group_norm: True
   eval_fixed_crop: True

@@ -1,5 +1,22 @@
 python diffusion_policy/scripts/robomimic_dataset_conversion.py -i data/robomimic/datasets/coffee_preparation/coffee_preparation_d0.hdf5 -o data/robomimic/datasets/coffee_preparation/coffee_preparation_d0_abs.hdf5 -n 32
 
+## 0907修改为基于AMED
+
+### ddpm
+python train_sim.py --config-name=robomimic_acdp_ddim task_name=coffee_preparation_d0 n_demo=100
+9月7日 04.10.32_diff_c_coffee_preparation_d0
+
+### ddim 
+#### 推理步长20 使用dp3的unet网络 condition_type: cross_attention
+训练：
+python train_sim.py --config-name=robomimic_acdp_ddim_dp3 task_name=coffee_preparation_d0 n_demo=200
+9月7日 14.54.59_diff_c_coffee_preparation_d0
+
+
+
+
+
+
 ## Baseline：预测噪声改为状态
 ###  demo=200   50次测试，成功率(epoch30开始到260 ，ckpt=0.68 0.64 0.66未更新，即成功率没大变化)
 训练：
@@ -269,8 +286,8 @@ python train_sim.py --config-name=robomimic_acdp_dpm_solver++_heun task_name=cof
 9月6日 10.57.53_diff_c_coffee_preparation_d0
 
 #### dpm
-python train_sim.py --config-name=robomimic_acdp_dpm_solver++_dpm task_name=coffee_preparation_d0 n_demo=200
-9月6日 
+CUDA_VISIBLE_DEVICES=1 HYDRA_FULL_ERROR=1 python train_sim.py --config-name=robomimic_acdp_dpm_solver++_dpm task_name=coffee_preparation_d0 n_demo=200
+9月6日 23.58.46_diff_c_coffee_preparation_d0
 
 #### ipndm
 python train_sim.py --config-name=robomimic_acdp_ddim task_name=coffee_preparation_d0 n_demo=200
