@@ -22,39 +22,43 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: diffusion_policy.policy.robomimic.diffusion_unet_hybrid_image_policy.DiffusionUnetHybridImagePolicy
-  # _target_: diffusion_policy.policy.dp_diffusion_unet_image_policy.DiffusionUnetImagePolicy
-
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_euler.DiffusionUnetHybridImagePolicy
   shape_meta: ${shape_meta}
-  
+
   noise_scheduler:
-    _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
     num_train_timesteps: 100
     beta_start: 0.0001
     beta_end: 0.02
-    # beta_schedule is important
-    # this is the best we found
     beta_schedule: squaredcos_cap_v2
-    clip_sample: True
-    set_alpha_to_one: True
-    steps_offset: 0
+    variance_type: fixed_small # Yilun's paper uses fixed_small_log instead, but easy to cause Nan
+    clip_sample: True # required when predict_epsilon=False
+    # 根据self.noise_scheduler.config.prediction_type选择预测的目标类型。如果是epsilon，目标是噪声；如果是sample，目标是轨迹数据
     prediction_type: epsilon # or sample
 
-  horizon: ${horizon}
-  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
-  n_obs_steps: ${n_obs_steps}
+
+
+  # 扩散模型参数​​
   num_inference_steps: 20
-  obs_as_global_cond: ${obs_as_global_cond}
-  crop_shape: [76, 76]
-  # crop_shape: null
   diffusion_step_embed_dim: 128
-  down_dims: [512, 1024, 2048]
+  # down_dims: [512, 1024, 2048]
+  down_dims: [256, 512, 1024]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
-  obs_encoder_group_norm: True
-  eval_fixed_crop: True
-  rot_aug: False
+
+  # 策略结构参数​​
+  horizon: ${horizon}
+  n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
+  n_obs_steps: ${n_obs_steps}
+  obs_as_global_cond: ${obs_as_global_cond} # 观察作为全局条件
+  crop_shape: [76, 76]
+  # crop_shape: null
+
+  # 视觉编码器参数​​
+  obs_encoder_group_norm: true  # 观察编码器使用组归一化
+  eval_fixed_crop: true     # 评估时使用固定裁剪
+  rot_aug: false            # 是否启用旋转增强
 
   # scheduler.step params
   # predict_epsilon: True
@@ -97,7 +101,7 @@ training:
   lr_scheduler: cosine
   lr_warmup_steps: 500
   # num_epochs: ${eval:'50000 / ${n_demo}'}
-  num_epochs: 600
+  num_epochs: 300
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
