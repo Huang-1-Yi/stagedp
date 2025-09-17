@@ -1,23 +1,3 @@
-"""
-架构设计
-    观测编码器：使用robomimic的CNN（可能含CropRandomizer）提取图像特征，支持替换BatchNorm为GroupNorm。
-    扩散模型：ConditionalUnet1D处理时间序列动作，支持通过全局条件（观测特征）或局部条件（观测与动作拼接）注入信息。
-    条件机制：通过obs_as_global_cond控制是否将观测特征作为全局条件，影响模型输入维度。
-
-关键组件
-    调度器：DDPMScheduler管理扩散过程的时间步。
-    掩码生成器：LowdimMaskGenerator处理条件掩码，用于训练时数据修补。
-    数据增强：RotRandomizer支持旋转增强，CropRandomizer处理图像裁剪。
-
-训练流程
-    损失计算：预测噪声与真实噪声的MSE损失，通过掩码忽略条件部分。
-    归一化：LinearNormalizer统一处理观测和动作的归一化。
-
-推理流程
-    采样过程：通过conditional_sample逐步去噪生成动作序列，最终提取有效动作步。
-"""
-
-
 from typing import Dict
 import math
 import torch
@@ -65,6 +45,7 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             rot_aug=False,
             # parameters passed to step
             **kwargs):
+        self.test = True
         """
         功能：初始化 DiffusionUnetHybridImagePolicy 类，设置模型的所有超参数，加载配置，初始化各类组件。
         参数：
@@ -249,13 +230,32 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
             dtype=condition_data.dtype,
             device=condition_data.device,
             generator=generator)
-    
+                                                                                                                                                                                                                                                                                                                                                                 
         # set step values
         scheduler.set_timesteps(self.num_inference_steps)
 
         for t in scheduler.timesteps:
+            if self.test:
+                print("Sampling trajectory 结构:", trajectory.shape,"数据", trajectory)
+                trajectory[condition_mask] = condition_data[condition_mask]
+                print("Sampling trajectory 结构:", trajectory.shape,"数据:", trajectory)
+                print("Condition data 结构:", condition_data.shape,"数据:", condition_data)
+                print("Condition mask 结构:", condition_mask.shape,"数据:", condition_mask)
+                print("local cond 结构:", None if local_cond is None else local_cond.shape,"数据:", local_cond)
+                print("global cond 结构:", None if global_cond is None else global_cond.shape,"数据:", global_cond)
+                self.test = False
+                is_zeros = (condition_data == 0)
+                print("Condition data中是否全为0:", torch.any(is_zeros))# True
+
+                is_false = (condition_mask == False)
+                print("Condition mask中是否全为False:", torch.any(is_false))# True
+
+                has_one = (trajectory == 1.0)
+                print("Sampling trajectory中是否有精确的1.0:", torch.any(has_one))# False
+
             # 1. apply conditioning
             trajectory[condition_mask] = condition_data[condition_mask]
+
 
             # 2. predict model output
             model_output = model(trajectory, t, 
@@ -457,46 +457,64 @@ class DiffusionUnetHybridImagePolicy(BaseImagePolicy):
         else:
             raise ValueError(f"Unsupported prediction type {pred_type}")
 
-        # ===== 动作领域专用损失 =====
-        # 1. 基础MSE损失
+        # ========== 动作维度加权损失 ==========
         loss = F.mse_loss(pred, target, reduction='none')
         
-        # 2. 位置敏感加权
-        if self.action_dim >= 3:  # 假设前3维是位置
-            pos_weight = 5.0  # 位置权重因子
-            pos_mask = torch.zeros_like(loss)
-            pos_mask[..., :3] = 1.0  # 前3维是位置
-            loss = loss * (1 + (pos_weight - 1) * pos_mask)
+        # 获取动作维度
+        action_dim = self.action_dim
         
-        # 3. 时间平滑约束
-        if pred.dim() == 3:  # [B, T, D]
-            # 计算时间差分
-            diff = pred[:, 1:] - pred[:, :-1]
-            smooth_loss = torch.mean(diff**2, dim=-1)
-            # 添加到主损失
-            loss[:, 1:] += 0.1 * smooth_loss.unsqueeze(-1)
+        # 定义各部分的权重因子
+        pos_weight = 4.0  # 位置信息权重
+        rot_weight = 5.0  # 姿态信息权重
+        gripper_weight = 4.0  # 夹爪位置权重
+        other_weight = 1.0  # 其他参数权重
         
-        # 4. 关键点增强（针对抓取/放置任务）
-        if self.n_action_steps > 0:
-            # 假设每个动作序列有明确的开始和结束关键点
-            start_idx = self.n_obs_steps - 1
-            end_idx = start_idx + self.n_action_steps - 1
-            
-            # 增强关键点的损失权重
-            keypoint_weight = 3.0
-            keypoint_mask = torch.zeros_like(loss)
-            keypoint_mask[:, start_idx] = 1.0
-            keypoint_mask[:, end_idx] = 1.0
-            loss = loss * (1 + (keypoint_weight - 1) * keypoint_mask)
-        # =======================================================
-
-
-        # # ========== 关键修改：应用 iDDPM 加权损失 ==========
-        # loss = F.mse_loss(pred, target, reduction='none')
-        # loss = weights * loss  # 应用 iDDPM 加权
-        # # ==============================================
+        # 创建权重张量
+        weights = torch.ones_like(loss) * other_weight
         
+        # 前3维：位置信息
+        weights[..., :3] = pos_weight
+        
+        # 接下来的3维：姿态信息
+        if action_dim >= 6:  # 确保有至少6维
+            weights[..., 3:6] = rot_weight
+        
+        # 第7维：夹爪位置
+        if action_dim >= 7:  # 确保有至少7维
+            weights[..., 6] = gripper_weight
+        
+        # 应用加权
+        loss = weights * loss
+        # ===================================
+        
+        # 应用损失掩码
         loss = loss * loss_mask.type(loss.dtype)
         loss = reduce(loss, 'b ... -> b (...)', 'mean')
         loss = loss.mean()
         return loss
+        # # ===== 动作领域专用损失 =====
+        
+        # # 4. 关键点增强（针对抓取/放置任务）
+        # if self.n_action_steps > 0:
+        #     # 假设每个动作序列有明确的开始和结束关键点
+        #     start_idx = self.n_obs_steps - 1
+        #     end_idx = start_idx + self.n_action_steps - 1
+            
+        #     # 增强关键点的损失权重
+        #     keypoint_weight = 3.0
+        #     keypoint_mask = torch.zeros_like(loss)
+        #     keypoint_mask[:, start_idx] = 1.0
+        #     keypoint_mask[:, end_idx] = 1.0
+        #     loss = loss * (1 + (keypoint_weight - 1) * keypoint_mask)
+        # # =======================================================
+
+
+        # # # ========== 关键修改：应用 iDDPM 加权损失 ==========
+        # # loss = F.mse_loss(pred, target, reduction='none')
+        # # loss = weights * loss  # 应用 iDDPM 加权
+        # # # ==============================================
+        
+        # loss = loss * loss_mask.type(loss.dtype)
+        # loss = reduce(loss, 'b ... -> b (...)', 'mean')
+        # loss = loss.mean()
+        # return loss

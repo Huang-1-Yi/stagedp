@@ -22,7 +22,8 @@ dataset: diffusion_policy.dataset.robomimic.replay_image_dataset.RobomimicReplay
 dataset_path: data/robomimic/datasets/${task_name}/${task_name}_abs.hdf5
 
 policy:
-  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_loss.DiffusionUnetHybridImagePolicy
+  # _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_loss.DiffusionUnetHybridImagePolicy
+  _target_: acdp.policy.robomimic.diffusion_unet_hybrid_image_policy_action_loss.DiffusionUnetHybridImagePolicy
 
   shape_meta: ${shape_meta}
   
